@@ -134,7 +134,7 @@ final class ModelDownloader: NSObject {
         super.init()
 
         let config = URLSessionConfiguration.background(
-            withIdentifier: "com.localaitest.modeldownloader.bg"
+            withIdentifier: "self.pro-ai-lab.modeldownloader.bg"
         )
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true

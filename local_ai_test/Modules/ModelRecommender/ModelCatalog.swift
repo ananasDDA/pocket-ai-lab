@@ -55,7 +55,9 @@ enum ModelCatalog {
             ramRequiredGB: 1.6, diskSizeGB: 1.5,
             huggingFaceRepo: "mlx-community/gemma-2-2b-it-4bit",
             contextLength: 8192,
-            quality: .good
+            quality: .good,
+            licenseName: "Gemma Terms of Use",
+            licenseURL: "https://ai.google.dev/gemma/terms"
         ),
 
         AIModel(
@@ -83,7 +85,9 @@ enum ModelCatalog {
             ramRequiredGB: 2.2, diskSizeGB: 2.0,
             huggingFaceRepo: "mlx-community/Llama-3.2-3B-Instruct-4bit",
             contextLength: 131072,
-            quality: .good
+            quality: .good,
+            licenseName: "Llama 3.2 Community License",
+            licenseURL: "https://www.llama.com/llama3_2/license/"
         ),
 
         AIModel(
@@ -111,7 +115,9 @@ enum ModelCatalog {
             ramRequiredGB: 4.7, diskSizeGB: 4.9,
             huggingFaceRepo: "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
             contextLength: 131072,
-            quality: .great
+            quality: .great,
+            licenseName: "Llama 3.1 Community License",
+            licenseURL: "https://www.llama.com/llama3_1/license/"
         ),
 
         AIModel(
@@ -155,7 +161,9 @@ enum ModelCatalog {
             ramRequiredGB: 4.8, diskSizeGB: 2.8,
             huggingFaceRepo: "mlx-community/gemma-3-4b-it-4bit",
             contextLength: 131072,
-            quality: .great
+            quality: .great,
+            licenseName: "Gemma Terms of Use",
+            licenseURL: "https://ai.google.dev/gemma/terms"
         ),
 
         AIModel(
@@ -169,7 +177,9 @@ enum ModelCatalog {
             ramRequiredGB: 8.4, diskSizeGB: 7.5,
             huggingFaceRepo: "mlx-community/gemma-3-12b-it-4bit",
             contextLength: 131072,
-            quality: .excellent
+            quality: .excellent,
+            licenseName: "Gemma Terms of Use",
+            licenseURL: "https://ai.google.dev/gemma/terms"
         ),
 
         AIModel(
@@ -203,7 +213,9 @@ enum ModelCatalog {
             huggingFaceRepo: "bartowski/Llama-3.2-3B-Instruct-GGUF",
             contextLength: 131072,
             quality: .good,
-            preferredGGUFFilename: "Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+            preferredGGUFFilename: "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+            licenseName: "Llama 3.2 Community License",
+            licenseURL: "https://www.llama.com/llama3_2/license/"
         ),
 
         AIModel(
@@ -236,7 +248,9 @@ enum ModelCatalog {
             contextLength: 131072,
             quality: .great,
             preferredGGUFFilename: "gemma-3-4b-it-Q4_K_M.gguf",
-            mmprojFilename: "mmproj-F16.gguf"
+            mmprojFilename: "mmproj-F16.gguf",
+            licenseName: "Gemma Terms of Use",
+            licenseURL: "https://ai.google.dev/gemma/terms"
         ),
 
         // MARK: - whisper.cpp (ASR)

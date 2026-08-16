@@ -41,7 +41,9 @@
       "contextLength": 8192,
       "quality": 1,
       "requiresCompilation": false,
-      "source": "curated"
+      "source": "curated",
+      "licenseName": "Gemma Terms of Use",
+      "licenseURL": "https://ai.google.dev/gemma/terms"
     },
     {
       "id": "mlx-community/Phi-3.5-mini-instruct-4bit",
@@ -83,7 +85,9 @@
       "contextLength": 131072,
       "quality": 1,
       "requiresCompilation": false,
-      "source": "curated"
+      "source": "curated",
+      "licenseName": "Llama 3.2 Community License",
+      "licenseURL": "https://www.llama.com/llama3_2/license/"
     },
     {
       "id": "mlx-community/Qwen2.5-3B-Instruct-4bit",
@@ -125,7 +129,9 @@
       "contextLength": 131072,
       "quality": 2,
       "requiresCompilation": false,
-      "source": "curated"
+      "source": "curated",
+      "licenseName": "Llama 3.1 Community License",
+      "licenseURL": "https://www.llama.com/llama3_1/license/"
     },
     {
       "id": "mlx-community/Mistral-7B-Instruct-v0.3-4bit",
@@ -190,7 +196,9 @@
       "contextLength": 131072,
       "quality": 2,
       "requiresCompilation": false,
-      "source": "curated"
+      "source": "curated",
+      "licenseName": "Gemma Terms of Use",
+      "licenseURL": "https://ai.google.dev/gemma/terms"
     },
     {
       "id": "mlx-community/gemma-3-12b-it-4bit",
@@ -213,7 +221,9 @@
       "contextLength": 131072,
       "quality": 3,
       "requiresCompilation": false,
-      "source": "curated"
+      "source": "curated",
+      "licenseName": "Gemma Terms of Use",
+      "licenseURL": "https://ai.google.dev/gemma/terms"
     },
     {
       "id": "mlx-community/Qwen2-VL-7B-Instruct-4bit",
@@ -258,7 +268,9 @@
       "quality": 1,
       "requiresCompilation": false,
       "preferredGGUFFilename": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-      "source": "curated"
+      "source": "curated",
+      "licenseName": "Llama 3.2 Community License",
+      "licenseURL": "https://www.llama.com/llama3_2/license/"
     },
     {
       "id": "bartowski/Phi-3.5-mini-instruct-GGUF",
@@ -304,7 +316,9 @@
       "requiresCompilation": false,
       "preferredGGUFFilename": "gemma-3-4b-it-Q4_K_M.gguf",
       "mmprojFilename": "mmproj-F16.gguf",
-      "source": "curated"
+      "source": "curated",
+      "licenseName": "Gemma Terms of Use",
+      "licenseURL": "https://ai.google.dev/gemma/terms"
     },
     {
       "id": "ggerganov/whisper.cpp/tiny.en",

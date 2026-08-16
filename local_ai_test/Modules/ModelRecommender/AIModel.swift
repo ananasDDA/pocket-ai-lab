@@ -32,6 +32,12 @@ nonisolated struct AIModel: Identifiable, Hashable, Sendable, Codable {
     /// instead of `resolve/main` keeps a half-finished download consistent
     /// even if the repo is updated mid-flight.
     let revision: String?
+    /// Display name of the model's license when it requires explicit
+    /// acceptance before download (Llama Community License, Gemma Terms).
+    /// nil for permissively-licensed models — no gate is shown.
+    let licenseName: String?
+    /// Where the full license text lives; opened from the acceptance alert.
+    let licenseURL: String?
 
     init(
         id: String,
@@ -52,7 +58,9 @@ nonisolated struct AIModel: Identifiable, Hashable, Sendable, Codable {
         preferredGGUFFilename: String? = nil,
         mmprojFilename: String? = nil,
         source: ModelSource = .curated,
-        revision: String? = nil
+        revision: String? = nil,
+        licenseName: String? = nil,
+        licenseURL: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -73,6 +81,8 @@ nonisolated struct AIModel: Identifiable, Hashable, Sendable, Codable {
         self.mmprojFilename = mmprojFilename
         self.source = source
         self.revision = revision
+        self.licenseName = licenseName
+        self.licenseURL = licenseURL
     }
 
     /// Effective disk footprint. Core ML models that require on-device
@@ -93,7 +103,7 @@ nonisolated extension AIModel {
         case capabilities, fileLayout, ramRequiredGB, diskSizeGB
         case huggingFaceRepo, requiresAppleIntelligence, contextLength
         case quality, requiresCompilation, preferredGGUFFilename
-        case mmprojFilename, source, revision
+        case mmprojFilename, source, revision, licenseName, licenseURL
     }
 
     /// Hand-written so that hand-edited `catalog.json` entries may omit
@@ -120,7 +130,9 @@ nonisolated extension AIModel {
             preferredGGUFFilename: try c.decodeIfPresent(String.self, forKey: .preferredGGUFFilename),
             mmprojFilename: try c.decodeIfPresent(String.self, forKey: .mmprojFilename),
             source: try c.decodeIfPresent(ModelSource.self, forKey: .source) ?? .curated,
-            revision: try c.decodeIfPresent(String.self, forKey: .revision)
+            revision: try c.decodeIfPresent(String.self, forKey: .revision),
+            licenseName: try c.decodeIfPresent(String.self, forKey: .licenseName),
+            licenseURL: try c.decodeIfPresent(String.self, forKey: .licenseURL)
         )
     }
 
@@ -145,6 +157,8 @@ nonisolated extension AIModel {
         try c.encodeIfPresent(mmprojFilename, forKey: .mmprojFilename)
         try c.encode(source, forKey: .source)
         try c.encodeIfPresent(revision, forKey: .revision)
+        try c.encodeIfPresent(licenseName, forKey: .licenseName)
+        try c.encodeIfPresent(licenseURL, forKey: .licenseURL)
     }
 }
 

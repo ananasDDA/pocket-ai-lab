@@ -15,6 +15,7 @@ struct ModelCardView: View {
     @State private var highlightPulse = false
     @State private var webLink: WebLink?
     @State private var isResolvingDemo = false
+    @State private var showLicensePrompt = false
 
     private var downloader: ModelDownloader { ModelDownloader.shared }
     private var downloadState: ModelDownloadState { downloader.state(for: model) }
@@ -151,13 +152,35 @@ struct ModelCardView: View {
         switch downloadState {
         case .idle:
             Button {
-                downloader.download(model)
+                // Llama/Gemma weights ship under licenses that must be
+                // accepted before download; permissive models skip straight
+                // to downloading. One acceptance per license, persisted.
+                if ModelLicenseStore.requiresAcceptance(model) {
+                    showLicensePrompt = true
+                } else {
+                    downloader.download(model)
+                }
             } label: {
                 Label("Install", systemImage: "arrow.down.circle.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
+            .alert(model.licenseName ?? "Model license", isPresented: $showLicensePrompt) {
+                Button("View License") {
+                    if let url = model.licenseURL.flatMap(URL.init(string:)) {
+                        webLink = WebLink(url: url)
+                    }
+                }
+                Button("Accept & Download") {
+                    ModelLicenseStore.recordAcceptance(of: model)
+                    downloader.download(model)
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("\(model.name) is distributed under the \(model.licenseName ?? "model license"). "
+                     + "By downloading you agree to its terms.")
+            }
 
         case .fetchingManifest:
             HStack(spacing: 8) {
