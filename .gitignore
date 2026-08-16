@@ -1,0 +1,50 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+xcuserdata/
+
+# SPM
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# CocoaPods (if ever used)
+Pods/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Code signing
+*.mobileprovision
+*.p12
+
+# Archives
+*.xcarchive
+
+# Misc
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Feature specs (local only)
+FEATURES.md
+VLM_INTEGRATION_PLAN.md
+
+# Vendored XCFrameworks (fetched by Scripts/install_xcframeworks.sh and
+# Scripts/build_llama_mtmd_xcframework.sh). Too large for git; reproduce
+# locally from pinned release tags and commit SHAs.
+Vendor/
+build-tmp/
+
+# Ad-hoc safety backups of project.pbxproj (taken during manual edits).
+*.pbxproj.bak*
