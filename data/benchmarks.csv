@@ -1,0 +1,17 @@
+model,modelId,backend,quantization,parameters,device,chip,iOS,appVersion,date,genTokPerSec,genStdDev,prefillTokPerSecEst,pp512,tg128,loadSeconds,peakMemoryMB,throttled,throttleDropPercent,suiteVersion,tasksPassed,tasksTotal,score,mathPassed,instructionsPassed,knowledgePassed,retrievalPassed,multilingualPassed
+Gemma 2 2B,mlx-community/gemma-2-2b-it-4bit,MLX,4bit,2B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T22:10:23Z,29.66,1.37,286.9,272.4,24.73,3.7,2130,false,7.8,2,26,46,56.5,3,10,4,4,5
+Phi-3.5 Mini,mlx-community/Phi-3.5-mini-instruct-4bit,MLX,4bit,3.8B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T22:21:23Z,19.91,2.63,201.3,133.5,14.17,0.74,3192,true,23.4,2,33,46,71.7,4,14,6,4,5
+Llama 3.2 3B,mlx-community/Llama-3.2-3B-Instruct-4bit,MLX,4bit,3B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T22:30:55Z,24.32,3.7,245.4,188.5,19.48,2.12,2544,true,24.4,2,36,46,78.3,2,20,6,4,4
+Qwen 2.5 3B,mlx-community/Qwen2.5-3B-Instruct-4bit,MLX,4bit,3B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T22:39:06Z,24.53,1.75,280.8,241.1,21.68,1.23,2345,false,12.9,2,32,46,69.6,2,15,6,4,5
+Llama 3.1 8B,mlx-community/Llama-3.1-8B-Instruct-4bit,MLX,4bit,8B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T22:55:09Z,8.18,3.81,106.4,43.5,4.99,3.1,5137,true,65.1,2,37,46,80.4,4,19,5,4,5
+Mistral 7B v0.3,mlx-community/Mistral-7B-Instruct-v0.3-4bit,MLX,4bit,7B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T23:11:30Z,8.59,3.63,122.6,44.8,5.08,1.94,4641,true,60.4,2,30,46,65.2,2,13,6,4,5
+Gemma 3 4B (Vision),mlx-community/gemma-3-4b-it-4bit,MLX,4bit,4B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T23:22:28Z,22.16,2.95,161.4,121.9,12.82,5.05,4559,true,20.9,2,35,46,76.1,1,18,7,4,5
+Qwen2-VL 7B (Vision),mlx-community/Qwen2-VL-7B-Instruct-4bit,MLX,4bit,7B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T23:34:00Z,11.48,3.91,122.7,46.1,5.35,3.5,5464,true,50.9,2,36,46,78.3,5,14,7,4,6
+Llama 3.2 3B (GGUF),bartowski/Llama-3.2-3B-Instruct-GGUF,llama.cpp,Q4_K_M,3B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T23:41:42Z,27.21,0.93,546.4,458.6,24.74,8.87,696,false,6.5,2,36,46,78.3,2,20,6,4,4
+Phi-3.5 Mini (GGUF),bartowski/Phi-3.5-mini-instruct-GGUF,llama.cpp,Q4_K_M,3.8B,iPhone Air,A19,26.6.1,1.0.1,2026-09-03T23:51:41Z,23.54,1.22,404.2,291.2,19.95,0.26,1758,false,9.7,2,35,46,76.1,5,15,7,4,4
+"Gemma 3 4B (GGUF, Vision)",unsloth/gemma-3-4b-it-GGUF,llama.cpp,Q4_K_M,4B,iPhone Air,A19,26.6.1,1.0.1,2026-09-04T00:00:26Z,21.51,0.94,485,390.6,17.24,2.3,2149,false,7.5,2,38,46,82.6,3,19,7,4,5
+Qwen2.5 1.5B (Core ML),anziank/grio-qwen2.5-1.5b-instruct-coreml-stateful-int8,Core ML,int8-W8A16,1.5B,iPhone Air,A19,26.6.1,1.0.1,2026-09-06T08:32:05Z,3.4,0.2,645.1,703.4,3.4,40.86,4130,false,10.8,2,12,46,26.1,2,5,4,1,0
+Gemma 2 2B,mlx-community/gemma-2-2b-it-4bit,MLX,4bit,2B,iPhone Air,A19,26.6.1,1.0.1,2026-09-04T11:26:44Z,37.93,0.54,316.2,268.8,35.8,2.03,2089,false,2.6,2,26,46,56.5,3,10,4,4,5
+Phi-3.5 Mini,mlx-community/Phi-3.5-mini-instruct-4bit,MLX,4bit,3.8B,iPhone Air,A19,26.6.1,1.0.1,2026-09-04T11:34:17Z,23.3,2.73,224.8,94,14.7,0.96,3167,true,20.9,2,33,46,71.7,4,14,6,4,5
+Llama 3.2 3B,mlx-community/Llama-3.2-3B-Instruct-4bit,MLX,4bit,3B,iPhone Air,A19,26.6.1,1.0.1,2026-09-04T11:38:59Z,29.99,1.68,247.3,181.2,17.77,1.2,2508,true,10.6,2,36,46,78.3,2,20,6,4,4
+Qwen 2.5 3B,mlx-community/Qwen2.5-3B-Instruct-4bit,MLX,4bit,3B,iPhone Air,A19,26.6.1,1.0.1,2026-09-04T11:44:03Z,30.77,2.28,282.7,238.5,29.4,0.72,2332,false,13.4,2,32,46,69.6,2,15,6,4,5

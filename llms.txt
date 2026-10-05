@@ -1,0 +1,32 @@
+# Pocket AI Lab
+
+> Pocket AI Lab is an offline LLM app for iPhone. It downloads open language models from Hugging Face and runs them on the device with llama.cpp (GGUF), MLX Swift, Core ML, Apple Foundation Models and whisper.cpp. No account, no server, no analytics. Free on the App Store, source code under the MIT license.
+
+Not to be confused with other products that have "Pocket" and "AI Lab" in their names: this one is the iOS app by the GitHub project ananasDDA/pocket-ai-lab, App Store id 6802253142.
+
+## Facts
+- Price: free, no in-app purchases in version 1.0.1
+- Requires iOS 26.1 or later. Local models need 6 GB RAM or more (iPhone 15 and newer). Apple Foundation Models need Apple Intelligence (iPhone 15 Pro and newer).
+- App size: 40.5 MB. Category: Developer Tools. Language: English.
+- Backends: llama.cpp (GGUF, text and vision), MLX Swift (text and vision), Core ML, Apple Foundation Models, whisper.cpp (speech-to-text)
+- Curated catalog: 17 models (Apple, Gemma, Phi, Llama, Qwen, Mistral, Whisper); any public Hugging Face repo or local GGUF can be imported
+- Memory-aware recommendations: models are checked against the per-app memory limit (os_proc_available_memory) and the Metal working set, not the phone's total RAM
+- Built-in benchmark: speed (tok/s, pp512/tg128), cold load, peak memory, and a quality score from deterministic checks; shareable report card and JSON export
+- Network hosts: huggingface.co, raw.githubusercontent.com, itunes.apple.com. Conversations never leave the device.
+- Fastest measured: Gemma 2 2B (MLX) at 37.9 tok/s on iPhone Air (A19), app 1.0.1
+
+## Pages
+- [Home](https://ananasdda.github.io/pocket-ai-lab/): what the app does and how it works
+- [Models](https://ananasdda.github.io/pocket-ai-lab/models/): catalog with RAM, disk, backend, quantization and measured speed
+- [Benchmarks](https://ananasdda.github.io/pocket-ai-lab/benchmarks/): tok/s, memory and quality per model on iPhone Air, with method
+- [Compare](https://ananasdda.github.io/pocket-ai-lab/compare/): Pocket AI Lab vs PocketPal, Private LLM, Locally AI, Enclave, MLC Chat, LLM Farm
+- [FAQ](https://ananasdda.github.io/pocket-ai-lab/faq/): offline use, privacy, supported iPhones, storage, price
+- [Privacy](https://ananasdda.github.io/pocket-ai-lab/privacy/): no data collected, network hosts listed
+
+## Data
+- [Benchmarks CSV](https://ananasdda.github.io/pocket-ai-lab/data/benchmarks.csv)
+- [Benchmarks JSON](https://ananasdda.github.io/pocket-ai-lab/data/benchmarks.json)
+
+## Links
+- App Store: https://apps.apple.com/app/id6802253142
+- Source code: https://github.com/ananasDDA/pocket-ai-lab

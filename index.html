@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pocket AI Lab: offline LLM app for iPhone, runs Hugging Face models on-device</title>
+<meta name="description" content="Pocket AI Lab runs open LLMs from Hugging Face fully offline on iPhone with llama.cpp, MLX, Core ML and Apple Foundation Models. Free, MIT-licensed, no account. iOS 26.1+.">
+<link rel="canonical" href="https://ananasdda.github.io/pocket-ai-lab/">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">
+<meta name="apple-itunes-app" content="app-id=6802253142">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0f19" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Pocket AI Lab">
+<meta property="og:title" content="Pocket AI Lab: offline LLM app for iPhone, runs Hugging Face models on-device">
+<meta property="og:description" content="Pocket AI Lab runs open LLMs from Hugging Face fully offline on iPhone with llama.cpp, MLX, Core ML and Apple Foundation Models. Free, MIT-licensed, no account. iOS 26.1+.">
+<meta property="og:url" content="https://ananasdda.github.io/pocket-ai-lab/">
+<meta property="og:image" content="https://ananasdda.github.io/pocket-ai-lab/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Pocket AI Lab, offline LLM app for iPhone">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/pocket-ai-lab/favicon.ico" sizes="32x32">
+<link rel="icon" href="/pocket-ai-lab/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="/pocket-ai-lab/apple-touch-icon.png">
+<link rel="preload" href="/pocket-ai-lab/fonts/source-sans-3.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/pocket-ai-lab/fonts/plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+<script>try{var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}document.documentElement.classList.add('js')</script>
+<style>@font-face{font-family:"Source Sans 3";src:url(/pocket-ai-lab/fonts/source-sans-3.woff2) format("woff2");font-weight:200 900;font-style:normal;font-display:optional}@font-face{font-family:"IBM Plex Mono";src:url(/pocket-ai-lab/fonts/plex-mono-400.woff2) format("woff2");font-weight:400;font-style:normal;font-display:optional}@font-face{font-family:"IBM Plex Mono";src:url(/pocket-ai-lab/fonts/plex-mono-600.woff2) format("woff2");font-weight:600;font-style:normal;font-display:optional}:root{--bg:#fff;--bg-soft:#f9fafb;--bg-sunk:#f3f4f6;--line:#e5e7eb;--line-strong:#d1d5db;--fg:#0b0f19;--fg-2:#374151;--muted:#57606a;--link:#1d4ed8;--ok:#15803d;--warn:#a15c07;--btn:#0b0f19;--btn-fg:#fff;--hl:#ffd21e;--mlx:#1d4ed8;--mlx-bg:#eff6ff;--mlx-line:#bfdbfe;--llama:#c2410c;--llama-bg:#fff7ed;--llama-line:#fed7aa;--coreml:#15803d;--coreml-bg:#f0fdf4;--coreml-line:#bbf7d0;--apple:#b91c1c;--apple-bg:#fef2f2;--apple-line:#fecaca;--whisper:#a15c07;--whisper-bg:#fefce8;--whisper-line:#fde68a;--sans:"Source Sans 3",system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color-scheme:light}@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0b0f19;--bg-soft:#111827;--bg-sunk:#1a2232;--line:#1f2937;--line-strong:#374151;--fg:#f3f4f6;--fg-2:#d1d5db;--muted:#9ca3af;--link:#93c5fd;--ok:#4ade80;--warn:#fbbf24;--btn:#f3f4f6;--btn-fg:#0b0f19;--mlx:#93c5fd;--mlx-bg:rgba(59,130,246,.12);--mlx-line:rgba(59,130,246,.38);--llama:#fdba74;--llama-bg:rgba(249,115,22,.12);--llama-line:rgba(249,115,22,.38);--coreml:#86efac;--coreml-bg:rgba(34,197,94,.1);--coreml-line:rgba(34,197,94,.35);--apple:#fca5a5;--apple-bg:rgba(239,68,68,.12);--apple-line:rgba(239,68,68,.38);--whisper:#fde047;--whisper-bg:rgba(234,179,8,.1);--whisper-line:rgba(234,179,8,.35);color-scheme:dark}}:root[data-theme=dark]{--bg:#0b0f19;--bg-soft:#111827;--bg-sunk:#1a2232;--line:#1f2937;--line-strong:#374151;--fg:#f3f4f6;--fg-2:#d1d5db;--muted:#9ca3af;--link:#93c5fd;--ok:#4ade80;--warn:#fbbf24;--btn:#f3f4f6;--btn-fg:#0b0f19;--mlx:#93c5fd;--mlx-bg:rgba(59,130,246,.12);--mlx-line:rgba(59,130,246,.38);--llama:#fdba74;--llama-bg:rgba(249,115,22,.12);--llama-line:rgba(249,115,22,.38);--coreml:#86efac;--coreml-bg:rgba(34,197,94,.1);--coreml-line:rgba(34,197,94,.35);--apple:#fca5a5;--apple-bg:rgba(239,68,68,.12);--apple-line:rgba(239,68,68,.38);--whisper:#fde047;--whisper-bg:rgba(234,179,8,.1);--whisper-line:rgba(234,179,8,.35);color-scheme:dark}*,*::before,*::after{box-sizing:border-box}html{-webkit-text-size-adjust:100%;text-size-adjust:100%}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 var(--sans);-webkit-font-smoothing:antialiased;overflow-wrap:break-word}img{max-width:100%;height:auto;display:block}a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:3px}main p a,main li a:not(.mcard),main dd a{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px;text-decoration-color:color-mix(in srgb,currentColor 45%,transparent)}main .crumbs li a{text-decoration:none}:focus-visible{outline:2px solid var(--link);outline-offset:2px;border-radius:4px}h1,h2,h3{line-height:1.2;letter-spacing:-.015em;margin:0 0 .5em;font-weight:700}h1{font-size:clamp(2rem,1.4rem + 3vw,3.1rem);letter-spacing:-.025em}h2{font-size:clamp(1.35rem,1.15rem + .9vw,1.7rem)}h3{font-size:1.1rem;font-weight:650}p{margin:0 0 1em}code,kbd,.mono{font-family:var(--mono);font-size:.9em}code{background:var(--bg-sunk);border:1px solid var(--line);border-radius:5px;padding:.05em .35em}ul,ol{padding-left:1.25em;margin:0 0 1em}li{margin:.25em 0}.skip{position:absolute;left:-9999px;top:8px;background:var(--btn);color:var(--btn-fg);padding:8px 12px;border-radius:8px;z-index:10}.skip:focus{left:8px}.wrap{max-width:1120px;margin:0 auto;padding:0 16px}@media (min-width:720px){.wrap{padding:0 28px}}.site-head{border-bottom:1px solid var(--line);background:var(--bg)}.head-row{display:flex;align-items:center;gap:12px;min-height:58px;flex-wrap:wrap}.brand{display:flex;align-items:center;gap:9px;color:var(--fg);font-weight:700;font-size:1.06rem;letter-spacing:-.01em;margin-right:auto}.brand:hover{text-decoration:none}.brand img{width:28px;height:28px;border-radius:7px}.nav{display:flex;gap:2px;flex-wrap:wrap;order:3;width:100%;margin:0 -8px 6px}.nav a{color:var(--fg-2);padding:6px 8px;border-radius:7px;font-size:.95rem}.nav a:hover{background:var(--bg-sunk);text-decoration:none;color:var(--fg)}.nav a[aria-current=page]{color:var(--fg);font-weight:650;background:var(--bg-sunk)}.head-actions{display:flex;align-items:center;gap:6px}.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg-2);cursor:pointer;padding:0}.icon-btn:hover{border-color:var(--line-strong);color:var(--fg);text-decoration:none}.icon-btn svg{width:18px;height:18px}.theme-btn{display:none}.js .theme-btn{display:inline-flex}@media (min-width:860px){.nav{order:0;width:auto;margin:0 0 0 18px}.brand{margin-right:0}.head-actions{margin-left:auto}}.btn{display:inline-flex;align-items:center;gap:8px;border-radius:9px;padding:10px 16px;font-weight:650;font-size:.98rem;border:1px solid transparent;line-height:1.2}.btn:hover{text-decoration:none}.btn svg{width:18px;height:18px;flex:none}.btn-primary{background:var(--btn);color:var(--btn-fg)}.btn-primary:hover{opacity:.88}.btn-ghost{border-color:var(--line-strong);color:var(--fg);background:var(--bg)}.btn-ghost:hover{background:var(--bg-soft)}.btn-row{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 12px}main{display:block}.section{padding:44px 0;border-top:1px solid var(--line)}.section:first-child{border-top:0}@media (min-width:720px){.section{padding:64px 0}}.section-head{max-width:760px;margin-bottom:26px}.lead{font-size:1.14rem;color:var(--fg-2);max-width:720px}.muted{color:var(--muted)}.small{font-size:.9rem}.eyebrow{font-family:var(--mono);font-size:.82rem;color:var(--muted);margin:0 0 14px;display:flex;flex-wrap:wrap;gap:6px 12px}.prose{max-width:760px}.prose h2{margin-top:1.6em}.prose h2:first-child{margin-top:0}.answer{font-size:1.06rem}.hero{padding:44px 0 52px;display:grid;gap:36px;align-items:center}@media (min-width:960px){.hero{grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr);padding:72px 0 80px;gap:56px}}.hero-icon{width:64px;height:64px;border-radius:15px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,.12),0 0 0 1px var(--line)}.hero h1 .sub{display:block;color:var(--muted);font-weight:600;font-size:.56em;letter-spacing:-.01em;margin-top:.3em}.facts{font-family:var(--mono);font-size:.82rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 10px;margin:0;padding:0;list-style:none}.facts li{margin:0}.facts li+li::before{content:"·";margin-right:10px;color:var(--line-strong)}.card{border:1px solid var(--line);border-radius:12px;background:var(--bg)}.report{background:linear-gradient(180deg,var(--bg-soft),var(--bg) 60%);overflow:hidden}.report-top{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:.76rem;color:var(--muted);flex-wrap:wrap}.report-top .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px;vertical-align:1px}.report-body{padding:18px 16px 16px}@media (min-width:480px){.report-body{padding:20px 22px}}.repo{font-family:var(--mono);font-size:.9rem;font-weight:600;color:var(--fg);word-break:break-all}.repo .org{color:var(--muted);font-weight:400}.metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:16px 0}.metric{background:var(--bg);padding:12px 14px}.metric b{display:block;font-family:var(--mono);font-size:1.32rem;font-weight:600;letter-spacing:-.02em;color:var(--fg)}.metric span{font-size:.84rem;color:var(--muted)}.bars{display:grid;gap:7px;margin:0;padding:0;list-style:none}.bars li{display:grid;grid-template-columns:7.5em minmax(0,1fr) 3.2em;gap:10px;align-items:center;font-size:.85rem;margin:0}.bars .lbl{color:var(--fg-2)}.bars .val{font-family:var(--mono);font-size:.8rem;text-align:right;color:var(--muted)}.bar{height:8px;border-radius:4px;background:var(--bg-sunk);overflow:hidden;border:1px solid var(--line)}.bar i{display:block;height:100%;background:var(--fg-2);border-radius:3px}.report-foot{font-family:var(--mono);font-size:.75rem;color:var(--muted);border-top:1px dashed var(--line);margin-top:16px;padding-top:12px}.tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0;padding:0;list-style:none}.tags li{margin:0}.tag{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.76rem;line-height:1.5;padding:1px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg-soft);color:var(--fg-2);white-space:nowrap}.tag-mlx{color:var(--mlx);background:var(--mlx-bg);border-color:var(--mlx-line)}.tag-llama{color:var(--llama);background:var(--llama-bg);border-color:var(--llama-line)}.tag-coreml{color:var(--coreml);background:var(--coreml-bg);border-color:var(--coreml-line)}.tag-apple{color:var(--apple);background:var(--apple-bg);border-color:var(--apple-line)}.tag-whisper{color:var(--whisper);background:var(--whisper-bg);border-color:var(--whisper-line)}.tag-warn{color:var(--warn);border-color:var(--line-strong);background:var(--bg)}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid var(--line);border-radius:12px;overflow:hidden;gap:1px;background:var(--line);margin:0;padding:0;list-style:none}@media (min-width:860px){.stats{grid-template-columns:repeat(4,minmax(0,1fr))}}.stats li{background:var(--bg);padding:18px 18px 16px;margin:0}.stats b{display:block;font-family:var(--mono);font-size:1.55rem;font-weight:600;letter-spacing:-.03em}.stats span{color:var(--muted);font-size:.9rem;line-height:1.4;display:block;margin-top:2px}.grid{display:grid;gap:14px}@media (min-width:640px){.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (min-width:960px){.grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}}.box{border:1px solid var(--line);border-radius:12px;padding:18px 18px 16px;background:var(--bg)}.box h3{margin-bottom:.35em}.box p:last-child{margin-bottom:0}.box .k{font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-bottom:8px;display:block}.backend{--cable:var(--line-strong);box-shadow:inset 0 3px 0 var(--cable)}.backend.b-mlx{--cable:#3b82f6}.backend.b-llama{--cable:#f97316}.backend.b-coreml{--cable:#22c55e}.backend.b-apple{--cable:#ef4444}.backend.b-whisper{--cable:#eab308}.steps{counter-reset:s;display:grid;gap:14px;margin:0;padding:0;list-style:none}@media (min-width:860px){.steps{grid-template-columns:repeat(4,minmax(0,1fr))}}.steps li{counter-increment:s;border:1px solid var(--line);border-radius:12px;padding:16px;margin:0}.steps li::before{content:counter(s,decimal-leading-zero);font-family:var(--mono);font-size:.78rem;color:var(--muted);display:block;margin-bottom:6px}.steps h3{margin-bottom:.3em}.steps p{margin:0;color:var(--fg-2);font-size:.96rem}.model-grid{display:grid;gap:12px;margin:0;padding:0;list-style:none}@media (min-width:700px){.model-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (min-width:1040px){.model-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}.model-grid>li{margin:0}.mcard{display:flex;flex-direction:column;height:100%;border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:linear-gradient(180deg,var(--bg-soft),var(--bg));color:var(--fg);transition:border-color .15s}.mcard:hover{border-color:var(--line-strong);text-decoration:none}.mcard:hover .mname{text-decoration:underline;text-underline-offset:3px}.mhead{display:flex;gap:10px;align-items:flex-start}.avatar{flex:none;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-family:var(--mono);font-size:.78rem;font-weight:600;border:1px solid var(--line);background:var(--bg)}.mname{font-family:var(--mono);font-size:.86rem;font-weight:600;line-height:1.35;word-break:break-word;margin:0}.mname .org{font-weight:400;color:var(--muted)}.mtitle{font-size:.92rem;color:var(--fg-2);margin:2px 0 0}.mmeta{font-family:var(--mono);font-size:.76rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:2px 12px;margin-top:auto;padding-top:12px}.mmeta .speed{color:var(--fg)}.filters{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 18px}.filters button{font:inherit;font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);background:var(--bg);color:var(--fg-2);border-radius:999px;padding:5px 12px;cursor:pointer}.filters button:hover{border-color:var(--line-strong)}.filters button[aria-pressed=true]{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}.count{font-family:var(--mono);font-size:.8rem;color:var(--muted);margin:0 0 12px}.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;margin:0 0 14px;background:var(--bg)}.table-wrap:focus-visible{outline-offset:0}table{border-collapse:collapse;width:100%;font-size:.92rem}th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}thead th{font-size:.78rem;font-weight:600;color:var(--muted);background:var(--bg-soft);white-space:nowrap;font-family:var(--mono);text-transform:none}td.num,th.num{text-align:right;font-family:var(--mono);font-size:.85rem;white-space:nowrap}td .sd{color:var(--muted);font-size:.78rem}tbody tr:hover{background:var(--bg-soft)}tr.throttled td.num:first-of-type{color:var(--muted)}.table-note{font-size:.86rem;color:var(--muted);margin:-4px 0 14px;max-width:860px}.cell-model{min-width:11em}.cell-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}.table-wrap tbody td:first-child,.table-wrap thead th:first-child{position:sticky;left:0;z-index:1;background:var(--bg)}.table-wrap thead th:first-child{background:var(--bg-soft)}.table-wrap tbody tr:hover td:first-child{background:var(--bg-soft)}@media (max-width:640px){.table-wrap tbody td:first-child{box-shadow:1px 0 0 var(--line)}}.cell-model a{font-weight:600}.compare td:first-child,.compare th:first-child{position:sticky;left:0;background:var(--bg);z-index:1}.compare thead th:first-child{background:var(--bg-soft)}.compare tr.self td,.compare tr.self th{background:var(--bg-soft)}.compare tr.self th{box-shadow:inset 3px 0 0 var(--fg)}.compare tbody th{font-weight:600}dl.specs{display:grid;grid-template-columns:7.2em minmax(0,1fr);margin:0;border:1px solid var(--line);border-radius:12px;overflow:hidden}dl.specs dt,dl.specs dd{margin:0;padding:8px 12px;border-bottom:1px solid var(--line)}dl.specs dt{color:var(--muted);font-size:.9rem;background:var(--bg-soft)}dl.specs dd{font-family:var(--mono);font-size:.8rem;word-break:break-word;line-height:1.5}dl.specs dt:last-of-type,dl.specs dd:last-of-type{border-bottom:0}.crumbs{font-family:var(--mono);font-size:.8rem;color:var(--muted);margin:22px 0 0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:4px}.crumbs li{margin:0}.crumbs li+li::before{content:"/";margin-right:4px;color:var(--line-strong)}.page-head{padding:22px 0 30px;border-bottom:1px solid var(--line)}.page-head h1{font-size:clamp(1.7rem,1.3rem + 2vw,2.5rem)}.model-title{font-family:var(--mono);font-size:clamp(1.05rem,.9rem + .8vw,1.4rem);font-weight:600;letter-spacing:-.01em;word-break:break-all;margin:0 0 4px}.model-title .org{color:var(--muted);font-weight:400}.layout{display:grid;grid-template-columns:minmax(0,1fr);gap:28px;padding:32px 0 56px}.layout>*{min-width:0}@media (min-width:960px){.layout{grid-template-columns:minmax(0,1fr) 340px;gap:40px}}.side .box+.box{margin-top:14px}.note{border:1px solid var(--line);border-left:3px solid var(--hl);border-radius:8px;padding:12px 14px;background:var(--bg-soft);font-size:.95rem;margin:0 0 1em}.note p:last-child{margin:0}.faq h2{font-size:1.25rem;margin:0 0 .45em}.faq section{padding:24px 0;border-top:1px solid var(--line)}.faq section:first-child{border-top:0;padding-top:0}.faq p,.faq ul{max-width:720px}.site-foot{border-top:1px solid var(--line);padding:32px 0 40px;color:var(--muted);font-size:.9rem;background:var(--bg-soft)}.foot-grid{display:grid;gap:18px}@media (min-width:860px){.foot-grid{grid-template-columns:1.4fr 1fr 1fr}}.site-foot a{color:var(--fg-2)}.site-foot ul{list-style:none;padding:0;margin:0}.site-foot li{margin:0 0 4px}.foot-title{font-family:var(--mono);font-size:.78rem;color:var(--muted);margin:0 0 8px}.cta-band{display:flex;flex-wrap:wrap;gap:18px;align-items:center;justify-content:space-between}.cta-band h2{margin:0}[hidden]{display:none!important}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media (prefers-reduced-motion:reduce){*{transition:none!important}}</style>
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://ananasdda.github.io/pocket-ai-lab/#website","name":"Pocket AI Lab","url":"https://ananasdda.github.io/pocket-ai-lab/","inLanguage":"en"},{"@type":"MobileApplication","@id":"https://ananasdda.github.io/pocket-ai-lab/#app","name":"Pocket AI Lab","alternateName":"Pocket AI Lab offline LLM app for iPhone","description":"Offline LLM app for iPhone. Runs open language models from Hugging Face on the device with llama.cpp, MLX, Core ML, Apple Foundation Models and whisper.cpp. No account, no server.","operatingSystem":"iOS 26.1 or later","applicationCategory":"DeveloperApplication","softwareVersion":"1.0.1","datePublished":"2026-08-20","dateModified":"2026-09-05","fileSize":"40.5 MB","inLanguage":"en","contentRating":"4+","url":"https://ananasdda.github.io/pocket-ai-lab/","installUrl":"https://apps.apple.com/app/id6802253142","downloadUrl":"https://apps.apple.com/app/id6802253142","image":"https://ananasdda.github.io/pocket-ai-lab/icon-512.png","screenshot":"https://ananasdda.github.io/pocket-ai-lab/og.jpg","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"isAccessibleForFree":true,"license":"https://opensource.org/license/mit","sameAs":["https://apps.apple.com/app/id6802253142","https://github.com/ananasDDA/pocket-ai-lab"],"featureList":["Offline chat with open LLMs","llama.cpp (GGUF), MLX, Core ML, Apple Foundation Models and whisper.cpp backends","Device scan with memory-based model recommendations","Import models from Hugging Face with a fit verdict before download","Vision models for images and video frames","Speech-to-text with Whisper","Live CPU, RAM and thermal metrics","Built-in model benchmark with shareable report card"]},{"@type":"SoftwareSourceCode","@id":"https://ananasdda.github.io/pocket-ai-lab/#source","name":"pocket-ai-lab","codeRepository":"https://github.com/ananasDDA/pocket-ai-lab","license":"https://opensource.org/license/mit","programmingLanguage":"Swift","runtimePlatform":"iOS","targetProduct":{"@id":"https://ananasdda.github.io/pocket-ai-lab/#app"}}]}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head"><div class="wrap head-row">
+<a class="brand" href="/pocket-ai-lab/" aria-label="Pocket AI Lab home"><picture><source type="image/avif" srcset="/pocket-ai-lab/img/icon-56.avif"><img src="/pocket-ai-lab/img/icon-56.webp" width="28" height="28" alt="" class="" decoding="async"></picture><span>Pocket AI Lab</span></a>
+<nav class="nav" aria-label="Main"><a href="/pocket-ai-lab/models/">Models</a><a href="/pocket-ai-lab/benchmarks/">Benchmarks</a><a href="/pocket-ai-lab/compare/">Compare</a><a href="/pocket-ai-lab/faq/">FAQ</a><a href="/pocket-ai-lab/privacy/">Privacy</a></nav>
+<div class="head-actions">
+<a class="icon-btn" href="https://github.com/ananasDDA/pocket-ai-lab" aria-label="Source code on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
+<button class="icon-btn theme-btn" type="button" aria-label="Dark theme" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg></button>
+</div>
+</div></header>
+<main id="main">
+
+<div class="wrap">
+<section class="hero" aria-labelledby="h1">
+<div>
+<picture><source type="image/avif" srcset="/pocket-ai-lab/img/icon-192.avif"><img src="/pocket-ai-lab/img/icon-192.webp" width="64" height="64" alt="" class="hero-icon" decoding="async"></picture>
+<p class="eyebrow"><span>v1.0.1</span><span>iOS 26.1+</span><span>MIT</span><span>no account</span></p>
+<h1 id="h1">Pocket AI Lab <span class="sub">Offline LLM app for iPhone</span></h1>
+<p class="lead">Pocket AI Lab runs open language models from Hugging Face entirely on your iPhone. It checks how much memory iOS will actually give the app, tells you which models fit, downloads them once and then works in airplane mode. There's no account and no server.</p>
+<div class="btn-row">
+<a class="btn btn-primary" href="https://apps.apple.com/app/id6802253142"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Download on the App Store</a>
+<a class="btn btn-ghost" href="https://github.com/ananasDDA/pocket-ai-lab"><svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Source on GitHub</a>
+</div>
+<ul class="facts"><li>Free</li><li>40.5 MB</li><li>iPhone 15 or newer for local models</li><li>English</li></ul>
+</div>
+<figure class="card report" style="margin:0" aria-labelledby="report-cap">
+  <div class="report-top"><span><span class="dot"></span>benchmark report</span><span>iPhone Air · A19 · app 1.0.1</span></div>
+  <div class="report-body">
+    <div><span class="repo"><span class="org">bartowski/</span>Llama-3.2-3B-Instruct-GGUF</span></div>
+    <ul class="tags"><li><span class="tag tag-llama">llama.cpp</span></li><li><span class="tag">Q4_K_M</span></li><li><span class="tag">3B params</span></li><li><span class="tag">💬 text</span></li><li><span class="tag">128K ctx</span></li></ul>
+    <div class="metrics">
+      <div class="metric"><b>27.2</b><span>tok/s generation</span></div>
+      <div class="metric"><b>546</b><span>tok/s prefill (est.)</span></div>
+      <div class="metric"><b>696 MB</b><span>peak memory</span></div>
+      <div class="metric"><b>78.3</b><span>quality score / 100</span></div>
+    </div>
+    <ul class="bars"><li><span class="lbl">Math</span><span class="bar" aria-hidden="true"><i style="width:25%"></i></span><span class="val">2/8</span></li><li><span class="lbl">Instructions</span><span class="bar" aria-hidden="true"><i style="width:95%"></i></span><span class="val">20/21</span></li><li><span class="lbl">Knowledge</span><span class="bar" aria-hidden="true"><i style="width:86%"></i></span><span class="val">6/7</span></li><li><span class="lbl">Retrieval</span><span class="bar" aria-hidden="true"><i style="width:100%"></i></span><span class="val">4/4</span></li><li><span class="lbl">Multilingual</span><span class="bar" aria-hidden="true"><i style="width:67%"></i></span><span class="val">4/6</span></li></ul>
+    <figcaption class="report-foot" id="report-cap">2026-09-03 · 36/46 tasks passed · no throttling · numbers from a real run, <a href="/pocket-ai-lab/benchmarks/">all results</a></figcaption>
+  </div>
+</figure>
+</section>
+<ul class="stats" aria-label="Key numbers">
+<li><b>5</b><span>inference backends in one app</span></li>
+<li><b>17</b><span>models in the curated catalog, plus any GGUF you import</span></li>
+<li><b>37.9 tok/s</b><span>Gemma 2 2B (MLX) on iPhone Air, fastest measured</span></li>
+<li><b>0</b><span>accounts, servers or analytics. Chats stay on the phone</span></li>
+</ul>
+</div>
+
+<div class="wrap">
+<section class="section" aria-labelledby="what">
+<div class="prose">
+<h2 id="what">What is Pocket AI Lab?</h2>
+<p class="answer">Pocket AI Lab is a free iPhone app that downloads open LLMs from Hugging Face and runs them on the phone's own chip, so chats work without internet and never leave the device.</p>
+<p>It's built like a small lab bench. You see which runtime is generating, how fast, how hot the phone is getting and how much memory the model really uses. The same model can be run on different backends and measured with the built-in benchmark, which grades it on 46 tasks and produces a report card you can share.</p>
+</div>
+</section>
+
+<section class="section" aria-labelledby="who">
+<div class="section-head"><h2 id="who">Who is it for?</h2>
+<p class="answer">It's for people who want a private assistant that works offline, and for developers who want to know how a model actually behaves on an iPhone before they build on it.</p></div>
+<div class="grid grid-3">
+<div class="box"><span class="k">✈️ offline</span><h3>Private, offline chat</h3><p>On a plane, in the metro, or just when you'd rather not paste things into a cloud chatbot. After the download, the model runs with no network at all.</p></div>
+<div class="box"><span class="k">🧪 evaluate</span><h3>Picking an on-device model</h3><p>Compare GGUF against MLX, check tokens per second, load time and peak memory on your own phone, and export the report as JSON.</p></div>
+<div class="box"><span class="k">🤗 tinker</span><h3>Trying new models</h3><p>Paste a Hugging Face link, pick a quantization and get a fits / doesn't fit verdict for your device before a single byte downloads.</p></div>
+</div>
+</section>
+
+<section class="section" aria-labelledby="how">
+<div class="section-head"><h2 id="how">How does it work?</h2>
+<p class="answer">The app scans the phone, filters the catalog against the memory iOS really allows, downloads the model from Hugging Face and streams the answer token by token from whichever backend fits the model.</p></div>
+<ol class="steps">
+<li><h3>Scan</h3><p>Chip, RAM, free disk, the per-app memory allowance from <code>os_proc_available_memory</code> and the Metal working-set limit.</p></li>
+<li><h3>Recommend</h3><p>MLX and Core ML models are judged against the strict app limit. Memory-mapped llama.cpp and whisper.cpp models against the higher GPU working set.</p></li>
+<li><h3>Download</h3><p>Background download pinned to an exact repo revision. It survives app restarts, and the catalog itself updates from GitHub.</p></li>
+<li><h3>Chat</h3><p>Every backend speaks one streaming interface, with full conversation history and live CPU, RAM and thermal readings.</p></li>
+</ol>
+</section>
+
+<section class="section" aria-labelledby="backends">
+<div class="section-head"><h2 id="backends">Which inference backends does it support?</h2>
+<p class="answer">Five: llama.cpp for GGUF files, MLX Swift for MLX weights and vision models, Core ML, Apple's built-in Foundation Models, and whisper.cpp for speech-to-text.</p></div>
+<div class="grid grid-3">
+<div class="box backend b-llama"><span class="k">GGUF</span><h3>llama.cpp</h3><p>Runs GGUF files, the most common format for quantized models on Hugging Face. Weights are memory-mapped, so a 3B model at Q4_K_M peaked at 696 MB in our sweep. Vision models work through a separate mmproj projector.</p></div>
+<div class="box backend b-mlx"><span class="k">safetensors</span><h3>MLX Swift</h3><p>Apple's array framework for Apple silicon. Runs the 4-bit models from mlx-community, plus vision-language models that take photos and video frames.</p></div>
+<div class="box backend b-coreml"><span class="k">.mlmodelc</span><h3>Core ML</h3><p>Compiled Core ML packages, loaded through swift-transformers. On the current catalog model prompt reading is fast (about 703 tok/s) and generation slow (3.4 tok/s).</p></div>
+<div class="box backend b-apple"><span class="k">system</span><h3>Apple Foundation Models</h3><p>The ~3B model that ships with Apple Intelligence. Nothing to download. Needs an Apple Intelligence iPhone with the feature turned on.</p></div>
+<div class="box backend b-whisper"><span class="k">ggml</span><h3>whisper.cpp</h3><p>Speech-to-text. Record a voice message and the Whisper model turns it into text on the phone. 80 MB for tiny.en.</p></div>
+<div class="box"><span class="k">+ your own</span><h3>Import by link</h3><p>Paste <code>owner/repo</code> from Hugging Face. GGUF, MLX safetensors, Core ML and Whisper files are detected, Q4_K_M is preselected.</p></div>
+</div>
+</section>
+
+<section class="section" aria-labelledby="speed">
+<div class="section-head"><h2 id="speed">How fast do LLMs run on an iPhone?</h2>
+<p class="answer">On an iPhone Air with the A19 chip, 2B to 4B models generated 21.5 to 37.9 tokens per second in Pocket AI Lab 1.0.1. That's faster than most people read.</p></div>
+<div class="table-wrap" role="region" aria-label="Fastest unthrottled results" tabindex="0"><table>
+<thead><tr><th scope="col">Model</th><th scope="col" class="num">Gen tok/s</th><th scope="col" class="num">pp512 / tg128</th><th scope="col" class="num">Load s</th><th scope="col" class="num">Peak MB</th><th scope="col" class="num">Score</th></tr></thead>
+<tbody><tr>
+<td class="cell-model"><a href="/pocket-ai-lab/models/mlx-community/gemma-2-2b-it-4bit/">Gemma 2 2B</a><span class="cell-tags"><span class="tag tag-mlx">MLX</span></span></td>
+<td class="num">37.9 <span class="sd">± 0.5</span></td>
+<td class="num">~269 / 35.8</td>
+<td class="num">2.0</td>
+<td class="num">2,089</td>
+<td class="num">56.5</td>
+</tr><tr>
+<td class="cell-model"><a href="/pocket-ai-lab/models/mlx-community/qwen2-5-3b-instruct-4bit/">Qwen 2.5 3B</a><span class="cell-tags"><span class="tag tag-mlx">MLX</span></span></td>
+<td class="num">30.8 <span class="sd">± 2.3</span></td>
+<td class="num">~239 / 29.4</td>
+<td class="num">0.7</td>
+<td class="num">2,332</td>
+<td class="num">69.6</td>
+</tr><tr>
+<td class="cell-model"><a href="/pocket-ai-lab/models/bartowski/llama-3-2-3b-instruct-gguf/">Llama 3.2 3B (GGUF)</a><span class="cell-tags"><span class="tag tag-llama">llama.cpp</span></span></td>
+<td class="num">27.2 <span class="sd">± 0.9</span></td>
+<td class="num">~459 / 24.7</td>
+<td class="num">8.9</td>
+<td class="num">696</td>
+<td class="num">78.3</td>
+</tr><tr>
+<td class="cell-model"><a href="/pocket-ai-lab/models/bartowski/phi-3-5-mini-instruct-gguf/">Phi-3.5 Mini (GGUF)</a><span class="cell-tags"><span class="tag tag-llama">llama.cpp</span></span></td>
+<td class="num">23.5 <span class="sd">± 1.2</span></td>
+<td class="num">~291 / 20.0</td>
+<td class="num">0.3</td>
+<td class="num">1,758</td>
+<td class="num">76.1</td>
+</tr><tr>
+<td class="cell-model"><a href="/pocket-ai-lab/models/unsloth/gemma-3-4b-it-gguf/">Gemma 3 4B (GGUF, Vision)</a><span class="cell-tags"><span class="tag tag-llama">llama.cpp</span></span></td>
+<td class="num">21.5 <span class="sd">± 0.9</span></td>
+<td class="num">~391 / 17.2</td>
+<td class="num">2.3</td>
+<td class="num">2,149</td>
+<td class="num">82.6</td>
+</tr></tbody></table></div><p class="table-note">Measured 2026-09-03 to 2026-09-06 on iPhone Air (A19, 11.5 GB RAM as reported by iOS, iOS 26.6.1). Gen tok/s is the mean of 3 runs of 200 tokens. Full table and method on <a href="/pocket-ai-lab/benchmarks/">the benchmarks page</a>.</p>
+</section>
+
+<section class="section" aria-labelledby="import">
+<div class="grid grid-2" style="align-items:start">
+<div class="prose">
+<h2 id="import">Can I run any model from Hugging Face?</h2>
+<p class="answer">Mostly yes. Paste a public repo link and the app reads the file list, offers the available quantizations and shows a RAM and disk verdict for your phone before downloading.</p>
+<p>GGUF files from the Files app work too. Gated repos (the ones where you accept a license on the website first) can't be downloaded, because the app downloads anonymously and never asks for your Hugging Face token. A mirror repo of the same model usually works.</p>
+</div>
+<div class="card" style="padding:16px 18px">
+<p class="mono small muted" style="margin:0 0 8px">Models → ⊕ → paste</p>
+<p class="mono" style="margin:0 0 12px;font-weight:600">bartowski/Llama-3.2-1B-Instruct-GGUF</p>
+<ul class="tags" style="margin:0 0 12px"><li><span class="tag tag-llama">GGUF</span></li><li><span class="tag">Q4_K_M ✓</span></li><li><span class="tag">Q5_K_M</span></li><li><span class="tag">Q8_0</span></li></ul>
+<p class="small muted" style="margin:0">The app validates the repo through the Hugging Face API, detects the format, then compares the file size with your phone's memory budget. Illustration of the import flow, not a screenshot.</p>
+</div>
+</div>
+</section>
+
+<section class="section" aria-labelledby="needs">
+<div class="prose">
+<h2 id="needs">What do I need to run it?</h2>
+<p class="answer">An iPhone on iOS 26.1 or later, and for local models at least 6 GB of RAM, which means iPhone 15 or newer.</p>
+<ul>
+<li>Apple Foundation Models also need Apple Intelligence turned on, so iPhone 15 Pro or newer.</li>
+<li>Storage depends on the model, from 80 MB for Whisper tiny to 8.5 GB for Qwen 2.5 14B. The app itself is 40.5 MB.</li>
+<li>The app is universal, so it installs on iPads with iPadOS 26.1 too. Published benchmarks so far come from an iPhone.</li>
+</ul>
+</div>
+</section>
+
+<section class="section" aria-labelledby="oss">
+<div class="cta-band">
+<div class="prose">
+<h2 id="oss">Is Pocket AI Lab open source?</h2>
+<p class="answer" style="margin:0">Yes. The full Swift source is on GitHub under the MIT license, and the model catalog the app downloads lives in the same repository.</p>
+</div>
+<div class="btn-row">
+<a class="btn btn-primary" href="https://apps.apple.com/app/id6802253142"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Download on the App Store</a>
+<a class="btn btn-ghost" href="https://github.com/ananasDDA/pocket-ai-lab"><svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Source on GitHub</a>
+</div>
+</div>
+</section>
+</div>
+</main>
+<footer class="site-foot"><div class="wrap foot-grid">
+<div>
+<p class="foot-title">Pocket AI Lab</p>
+<p>Pocket AI Lab is an offline LLM app for iPhone. It runs open models from Hugging Face on the device, with no account and no server. Free on the App Store, source code under the MIT license.</p>
+<p class="small">Not affiliated with Hugging Face, Apple, Meta, Google, Microsoft, Mistral AI or Alibaba. Model names belong to their owners, and each model keeps its own license.</p>
+</div>
+<div><p class="foot-title">Site</p><ul><li><a href="/pocket-ai-lab/">Home</a></li><li><a href="/pocket-ai-lab/models/">Models</a></li><li><a href="/pocket-ai-lab/benchmarks/">Benchmarks</a></li><li><a href="/pocket-ai-lab/compare/">Compare</a></li><li><a href="/pocket-ai-lab/faq/">FAQ</a></li><li><a href="/pocket-ai-lab/privacy/">Privacy</a></li></ul></div>
+<div><p class="foot-title">Elsewhere</p><ul>
+<li><a href="https://apps.apple.com/app/id6802253142">App Store</a></li>
+<li><a href="https://github.com/ananasDDA/pocket-ai-lab">GitHub</a></li>
+<li><a href="https://github.com/ananasDDA/pocket-ai-lab/issues">Report an issue</a></li>
+<li><a href="/pocket-ai-lab/llms.txt">llms.txt</a></li>
+</ul><p class="small" style="margin-top:12px">Data checked 2026-10-03. App 1.0.1.</p></div>
+</div></footer>
+<script>(() => {
+const root = document.documentElement;
+const btn = document.querySelector('.theme-btn');
+if (btn) {
+const dark = () => root.dataset.theme
+? root.dataset.theme === 'dark'
+: matchMedia('(prefers-color-scheme: dark)').matches;
+const sync = () => btn.setAttribute('aria-pressed', String(dark()));
+sync();
+btn.addEventListener('click', () => {
+root.dataset.theme = dark() ? 'light' : 'dark';
+try { localStorage.setItem('theme', root.dataset.theme); } catch (e) { }
+sync();
+});
+}
+const bar = document.querySelector('[data-filters]');
+if (bar) {
+const cards = [...document.querySelectorAll('[data-model]')];
+const count = document.querySelector('[data-count]');
+const buttons = [...bar.querySelectorAll('button')];
+bar.hidden = false;
+bar.addEventListener('click', (e) => {
+const b = e.target.closest('button');
+if (!b) return;
+buttons.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+const f = b.dataset.filter;
+let shown = 0;
+cards.forEach((c) => {
+const ok = f === 'all' || c.dataset.model.split(' ').includes(f);
+c.hidden = !ok;
+if (ok) shown++;
+});
+if (count) count.textContent = `${shown} of ${cards.length} models`;
+});
+}
+})();</script>
+</body>
+</html>
