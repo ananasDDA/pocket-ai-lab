@@ -20,11 +20,6 @@
 
 import Foundation
 
-/// The literal token libmtmd looks for in the prompt to splice in an
-/// image/audio chunk. Hard-coded on the C side (see `mtmd_default_marker`
-/// in `mtmd.cpp`); we mirror it here to avoid a round-trip just to read it.
-private let kMediaMarker = "<__media__>"
-
 #if canImport(llama)
 
 import llama
@@ -63,6 +58,10 @@ final class LlamaCppVisionEngine: InferenceEngine, @unchecked Sendable {
         await ctx?.cleanup()
     }
 
+    func embeddedChatTemplate() async -> String? {
+        await context?.embeddedChatTemplate()
+    }
+
     func resetConversation() async {
         await context?.reset()
     }
@@ -94,35 +93,29 @@ final class LlamaCppVisionEngine: InferenceEngine, @unchecked Sendable {
                         )
                     }
 
-                    // 1. Assemble the text prompt via the model family's
-                    //    template (same path as the text engine so chat
-                    //    structure stays consistent between backends).
+                    // Assemble the transcript, its media markers and the
+                    // bitmaps in one pass, trimmed to what the context
+                    // window can hold. The engine is stateless — the KV
+                    // cache is rebuilt from this prompt on every turn — so
+                    // the media of EVERY turn is replayed, not just the
+                    // last one's.
                     let family = PromptFormatter.detectFamily(modelId: self.model.id)
-                    var prompt = PromptFormatter.format(turns: turns, family: family)
-
-                    // 2. Pull image bytes from the last user turn. Video
-                    //    attachments are flattened into their sampled
-                    //    frames (VideoFrameExtractor produces ~8 JPEGs by
-                    //    default); libmtmd has no native "video" chunk
-                    //    type — it sees each frame as a separate image.
-                    //    Audio via `mtmd_bitmap_init_from_audio` is
-                    //    deferred to a follow-up.
-                    let images = Self.extractImages(from: turns)
-
-                    // 3. Splice one `<__media__>` marker per image into the
-                    //    tail of the last user message — right before the
-                    //    assistant-open tag that `PromptFormatter` appends.
-                    //    Placing markers *after* the text means the model
-                    //    sees the question first, which mirrors the
-                    //    `mtmd-cli` behaviour and works for every arch
-                    //    (Gemma 3 / LLaVA / Qwen2-VL).
-                    if !images.isEmpty {
-                        prompt = Self.injectMediaMarkers(
-                            into: prompt,
-                            family: family,
-                            count: images.count
-                        )
-                    }
+                    let prepared = VisionPromptBuilder.build(
+                        turns: turns,
+                        family: family,
+                        budgetTokens: Int(LlamaVisionContext.contextTokens)
+                            - parameters.maxTokens - 64
+                    )
+                    // The markers are part of the user turn's text by now,
+                    // so the model's own template renders them in place.
+                    let rendered = ChatTemplateResolver.render(
+                        turns: prepared.turns,
+                        modelID: self.model.id,
+                        embedded: await ctx.embeddedChatTemplate()
+                    )
+                    continuation.yield(.diagnostic(.promptRendered(rendered)))
+                    let prompt = rendered.text
+                    let images = prepared.images
 
                     let start = Date()
 
@@ -170,7 +163,7 @@ final class LlamaCppVisionEngine: InferenceEngine, @unchecked Sendable {
             includingPropertiesForKeys: nil
         )) ?? []
         guard let gguf = items.first(where: {
-            $0.pathExtension.lowercased() == "gguf" && !$0.lastPathComponent.hasPrefix("mmproj")
+            GGUFNaming.isWeights($0.lastPathComponent)
         }) else {
             throw InferenceError.generationFailed("No main .gguf file found in \(modelDirectory.path)")
         }
@@ -186,86 +179,10 @@ final class LlamaCppVisionEngine: InferenceEngine, @unchecked Sendable {
             at: modelDirectory,
             includingPropertiesForKeys: nil
         )) ?? []
-        guard let mmproj = items.first(where: { $0.lastPathComponent.hasPrefix("mmproj") }) else {
+        guard let mmproj = items.first(where: { GGUFNaming.isProjector($0.lastPathComponent) }) else {
             throw InferenceError.generationFailed("No mmproj-*.gguf file found in \(modelDirectory.path)")
         }
         return mmproj
-    }
-}
-
-// MARK: - Attachment / marker helpers (shared; also used by unit tests)
-
-extension LlamaCppVisionEngine {
-
-    /// Returns image bytes from the **last user turn** only. Earlier turns'
-    /// attachments are ignored because the KV-cache replays prior messages
-    /// as text chunks; re-tokenising their images would misalign `nPast`.
-    ///
-    /// `.videoFrames` attachments are flattened into their individual JPEG
-    /// samples and surface as multiple images — one `<__media__>` marker
-    /// per frame, which is exactly what libmtmd expects. Gemma 3 / LLaVA
-    /// / Qwen2-VL interpret a sequence of images as a temporal sequence
-    /// without any special "video" chunk type.
-    ///
-    /// `.audio` is skipped for now (needs `mtmd_bitmap_init_from_audio` +
-    /// PCM decoding; deferred to a follow-up).
-    static func extractImages(from turns: [ChatTurn]) -> [Data] {
-        guard let lastUser = turns.last(where: { $0.role == .user }) else { return [] }
-        var out: [Data] = []
-        for attachment in lastUser.attachments {
-            switch attachment {
-            case .image(let data):
-                out.append(data)
-            case .videoFrames(let frames, _):
-                out.append(contentsOf: frames)
-            case .audio:
-                continue
-            }
-        }
-        return out
-    }
-
-    /// Inserts `<__media__>` markers into the formatted prompt, one per
-    /// image. The exact insertion point depends on the chat template — we
-    /// want the markers to live inside the *last user turn*, not in the
-    /// assistant-open tag the formatter appends.
-    ///
-    /// Strategy: find the template-specific "assistant opens its turn"
-    /// substring, and inject markers immediately before it. This keeps the
-    /// markers inside the user's message body on every supported family.
-    static func injectMediaMarkers(
-        into prompt: String,
-        family: PromptFamily,
-        count: Int
-    ) -> String {
-        guard count > 0 else { return prompt }
-        let markers = String(repeating: kMediaMarker + "\n", count: count)
-
-        // These needles match `PromptFormatter`'s trailing "assistant
-        // opens" snippets. When the formatter changes, these need to move
-        // in lockstep (covered by `LlamaCppVisionPromptTests`).
-        let needle: String
-        switch family {
-        case .llama3:  needle = "<|start_header_id|>assistant<|end_header_id|>\n\n"
-        case .gemma:   needle = "<start_of_turn>model\n"
-        case .qwen, .chatml: needle = "<|im_start|>assistant\n"
-        case .phi:     needle = "<|assistant|>\n"
-        case .plain:   needle = "\n\nassistant:"
-        case .llama2, .mistral:
-            // These families don't have a separate assistant-open tag;
-            // the formatter ends with `[/INST]` right after the user's
-            // content, so markers go immediately before that.
-            needle = "[/INST]"
-        }
-
-        if let range = prompt.range(of: needle, options: .backwards) {
-            var copy = prompt
-            copy.insert(contentsOf: markers, at: range.lowerBound)
-            return copy
-        }
-        // Fallback: just append. mtmd only cares that the marker count
-        // matches the bitmap count, not where they are.
-        return prompt + "\n" + markers
     }
 }
 
@@ -285,36 +202,6 @@ final class LlamaCppVisionEngine: InferenceEngine, @unchecked Sendable {
     func resetConversation() async {}
     func generate(turns: [ChatTurn], parameters: GenerationParameters) -> AsyncThrowingStream<ChatOutput, Error> {
         AsyncThrowingStream { $0.finish(throwing: InferenceError.backendUnavailable("llama.cpp not linked")) }
-    }
-}
-
-// Stubs so unit tests (which test the helpers, not the C API) still
-// compile when `llama` isn't linked (e.g. on CI without the XCFramework).
-extension LlamaCppVisionEngine {
-    static func extractImages(from turns: [ChatTurn]) -> [Data] {
-        guard let lastUser = turns.last(where: { $0.role == .user }) else { return [] }
-        var out: [Data] = []
-        for attachment in lastUser.attachments {
-            switch attachment {
-            case .image(let data):
-                out.append(data)
-            case .videoFrames(let frames, _):
-                out.append(contentsOf: frames)
-            case .audio:
-                continue
-            }
-        }
-        return out
-    }
-
-    static func injectMediaMarkers(
-        into prompt: String,
-        family: PromptFamily,
-        count: Int
-    ) -> String {
-        guard count > 0 else { return prompt }
-        let markers = String(repeating: kMediaMarker + "\n", count: count)
-        return prompt + "\n" + markers
     }
 }
 

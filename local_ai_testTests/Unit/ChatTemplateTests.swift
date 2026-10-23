@@ -60,6 +60,41 @@ struct ChatTemplateTests {
         #expect(out.hasSuffix("<|assistant|>\n"))
     }
 
+    @Test func gemma4UsesItsOwnTurnMarkers() {
+        let out = PromptFormatter.format(turns: turns, family: .gemma4)
+        #expect(out == """
+        <|turn>system
+        You are a helpful assistant.<turn|>
+        <|turn>user
+        Hello<turn|>
+        <|turn>model
+        Hi there!<turn|>
+        <|turn>user
+        What's the weather?<turn|>
+        <|turn>model
+
+        """)
+        #expect(!out.contains("<start_of_turn>"))
+    }
+
+    @Test func gemma4WithoutASystemTurnOpensOnTheUser() {
+        let out = PromptFormatter.format(turns: [.user("Hi")], family: .gemma4)
+        #expect(out == "<|turn>user\nHi<turn|>\n<|turn>model\n")
+    }
+
+    /// The 2026 catalog additions. Gemma 4 must not be caught by the Gemma 3
+    /// rule, and LFM2 must not fall through to `.plain`.
+    @Test func detectFamilyCoversThe2026Catalog() {
+        #expect(PromptFormatter.detectFamily(modelId: "unsloth/gemma-4-E2B-it-GGUF") == .gemma4)
+        #expect(PromptFormatter.detectFamily(modelId: "unsloth/gemma-4-E4B-it-GGUF") == .gemma4)
+        #expect(PromptFormatter.detectFamily(modelId: "owner/gemma4-e2b#Q4_K_M") == .gemma4)
+        #expect(PromptFormatter.detectFamily(modelId: "unsloth/gemma-3-4b-it-GGUF") == .gemma)
+        #expect(PromptFormatter.detectFamily(modelId: "unsloth/Qwen3.5-0.8B-GGUF") == .qwen)
+        #expect(PromptFormatter.detectFamily(modelId: "unsloth/Qwen3.5-4B-GGUF") == .qwen)
+        #expect(PromptFormatter.detectFamily(modelId: "LiquidAI/LFM2-1.2B-GGUF") == .chatml)
+        #expect(PromptFormatter.detectFamily(modelId: "LiquidAI/LFM2-2.6B-GGUF") == .chatml)
+    }
+
     @Test func detectFamilyReturnsExpected() {
         #expect(PromptFormatter.detectFamily(modelId: "mlx-community/Llama-3.2-3B-Instruct-4bit") == .llama3)
         #expect(PromptFormatter.detectFamily(modelId: "mlx-community/gemma-3-4b-it-4bit") == .gemma)

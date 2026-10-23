@@ -49,6 +49,10 @@ final class LlamaCppTextEngine: InferenceEngine, @unchecked Sendable {
         await ctx?.cleanup()
     }
 
+    func embeddedChatTemplate() async -> String? {
+        await context?.embeddedChatTemplate()
+    }
+
     func resetConversation() async {
         await context?.reset()
     }
@@ -67,8 +71,13 @@ final class LlamaCppTextEngine: InferenceEngine, @unchecked Sendable {
                     return
                 }
                 do {
-                    let family = PromptFormatter.detectFamily(modelId: self.model.id)
-                    let prompt = PromptFormatter.format(turns: turns, family: family)
+                    let rendered = await ChatTemplateResolver.render(
+                        turns: turns,
+                        modelID: self.model.id,
+                        embedded: await ctx.embeddedChatTemplate()
+                    )
+                    continuation.yield(.diagnostic(.promptRendered(rendered)))
+                    let prompt = rendered.text
 
                     let start = Date()
 
@@ -80,7 +89,8 @@ final class LlamaCppTextEngine: InferenceEngine, @unchecked Sendable {
                         temperature: parameters.temperature,
                         topP: parameters.topP,
                         topK: parameters.topK,
-                        repetitionPenalty: parameters.repetitionPenalty
+                        repetitionPenalty: parameters.repetitionPenalty,
+                        seed: parameters.seed
                     ) { piece, index in
                         if index == 0 {
                             let ms = Date().timeIntervalSince(start) * 1000
@@ -90,6 +100,11 @@ final class LlamaCppTextEngine: InferenceEngine, @unchecked Sendable {
                     }
 
                     let elapsed = Date().timeIntervalSince(start)
+                    let prefill = await ctx.lastPrefill
+                    continuation.yield(.diagnostic(.promptProcessed(
+                        tokenCount: prefill.tokens,
+                        timeMs: prefill.ms
+                    )))
                     continuation.yield(.diagnostic(.finished(
                         tokensGenerated: tokensGenerated,
                         tokensPerSecond: elapsed > 0 ? Double(tokensGenerated) / elapsed : 0
@@ -113,11 +128,33 @@ final class LlamaCppTextEngine: InferenceEngine, @unchecked Sendable {
             if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
         }
         let items = (try? FileManager.default.contentsOfDirectory(at: modelDirectory, includingPropertiesForKeys: nil)) ?? []
-        guard let gguf = items.first(where: { $0.pathExtension.lowercased() == "gguf" && !$0.lastPathComponent.hasPrefix("mmproj") }) else {
+        guard let gguf = items.first(where: { GGUFNaming.isWeights($0.lastPathComponent) }) else {
             throw InferenceError.generationFailed("No .gguf file found in \(modelDirectory.path)")
         }
         return gguf
     }
+}
+
+/// One-time process setup for everything built on ggml.
+///
+/// Metal residency sets (on by default in this llama.cpp revision) keep
+/// every buffer the recent graphs touched resident for three minutes. On a
+/// phone that is memory this app does not have, and worse: long multimodal
+/// chats died mid-image-encode with "Discarded (victim of GPU
+/// error/recovery)", after which the Metal backend stays in an error state
+/// until it is recreated, so every later turn fails too. The same build
+/// trips a residency-set assertion (`[rsets->data count] == 0`) when the
+/// process exits. Turning the feature off costs nothing measurable here -
+/// the weights are memory-mapped and the working set is small enough that
+/// the allocator keeps up.
+enum LlamaRuntime {
+
+    /// Idempotent: the `Void` initialiser runs on first access and never
+    /// again. Both llama.cpp contexts touch it before they load anything.
+    static let bootstrap: Void = {
+        setenv("GGML_METAL_NO_RESIDENCY", "1", 1)
+        llama_backend_init()
+    }()
 }
 
 /// Actor isolating all direct calls into the llama.cpp C API.
@@ -131,9 +168,25 @@ actor LlamaContext {
     private var ctx: OpaquePointer?
     private var sampler: UnsafeMutablePointer<llama_sampler>?
     private var nPast: Int32 = 0
+    /// The exact token sequence currently held in the KV cache, so a new
+    /// prompt can reuse the part of it that has not changed. Always the
+    /// same length as `nPast`.
+    private var cachedTokens: [llama_token] = []
+    /// Prompt size (after fitting it into the window) and the time spent
+    /// decoding the part the cache did not already hold, for the last
+    /// completion. Read by the engine for its prompt diagnostic.
+    private(set) var lastPrefill: (tokens: Int, ms: Double) = (0, 0)
+
+    /// Context window requested from llama.cpp. Prompts longer than what is
+    /// left of it are trimmed from the front (oldest history first).
+    static let contextSize: UInt32 = 4096
+    /// Largest number of tokens one `llama_decode` call may carry. llama.cpp
+    /// aborts the process (GGML_ASSERT, not a recoverable error) when a
+    /// batch exceeds it, so the prompt is always fed in slices of this size.
+    static let batchSize: UInt32 = 512
 
     static func create(modelPath: String) async throws -> LlamaContext {
-        llama_backend_init()
+        _ = LlamaRuntime.bootstrap
         var modelParams = llama_model_default_params()
         #if targetEnvironment(simulator)
         modelParams.n_gpu_layers = 0
@@ -146,8 +199,8 @@ actor LlamaContext {
         }
 
         var ctxParams = llama_context_default_params()
-        ctxParams.n_ctx = 4096
-        ctxParams.n_batch = 512
+        ctxParams.n_ctx = contextSize
+        ctxParams.n_batch = batchSize
         ctxParams.n_threads = Int32(max(1, ProcessInfo.processInfo.processorCount - 1))
         ctxParams.n_threads_batch = ctxParams.n_threads
 
@@ -165,11 +218,13 @@ actor LlamaContext {
     }
 
     func reset() {
-        guard let ctx else { return }
-        if let mem = llama_get_memory(ctx) {
-            llama_memory_clear(mem, true)
-        }
-        nPast = 0
+        dropCache()
+    }
+
+    /// The chat template stored in the GGUF, if it has one.
+    func embeddedChatTemplate() -> String? {
+        guard let model else { return nil }
+        return LlamaChatTemplate.embedded(in: model)
     }
 
     func cleanup() {
@@ -185,6 +240,9 @@ actor LlamaContext {
     /// decoded UTF-8-complete chunk and returns the number of tokens
     /// generated. The index lets callers detect the first token without
     /// sharing mutable state across concurrency domains.
+    ///
+    /// `seed` fixes the distribution sampler's RNG; `nil` keeps the previous
+    /// behaviour of drawing a fresh random seed per completion.
     func completion(
         prompt: String,
         maxTokens: Int,
@@ -192,6 +250,7 @@ actor LlamaContext {
         topP: Float,
         topK: Int,
         repetitionPenalty: Float,
+        seed: UInt64? = nil,
         onPiece: @Sendable (String, Int) -> Void
     ) async throws -> Int {
         guard let model, let ctx else { throw InferenceError.modelNotLoaded }
@@ -207,40 +266,114 @@ actor LlamaContext {
         llama_sampler_chain_add(chain, llama_sampler_init_top_k(Int32(topK)))
         llama_sampler_chain_add(chain, llama_sampler_init_top_p(topP, 1))
         llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
-        llama_sampler_chain_add(chain, llama_sampler_init_dist(UInt32(truncatingIfNeeded: UInt64.random(in: 0...UInt64(UInt32.max)))))
+        // A caller-supplied seed makes the sampler reproducible (the benchmark
+        // relies on it); without one, every completion draws a fresh seed, as
+        // before. llama.cpp reserves 0xFFFFFFFF for "pick a random seed", so a
+        // supplied seed that truncates onto it is nudged by one rather than
+        // silently becoming random.
+        let samplerSeed: UInt32
+        if let seed {
+            // 0xFFFFFFFF is llama.cpp's LLAMA_DEFAULT_SEED sentinel; spelled
+            // out here because the C macro's imported Swift type is not
+            // guaranteed to be UInt32.
+            let truncated = UInt32(truncatingIfNeeded: seed)
+            samplerSeed = truncated == 0xFFFF_FFFF ? truncated &- 1 : truncated
+        } else {
+            samplerSeed = UInt32(truncatingIfNeeded: UInt64.random(in: 0...UInt64(UInt32.max)))
+        }
+        llama_sampler_chain_add(chain, llama_sampler_init_dist(samplerSeed))
         sampler = chain
 
         // Tokenize prompt
         let promptCstr = Array(prompt.utf8CString)
         let maxTokens32 = Int32(prompt.utf8.count + 64)
         var tokens = [llama_token](repeating: 0, count: Int(maxTokens32))
+        // `add_special` is off: `PromptFormatter` already writes the
+        // template's own BOS marker for the families that have one (Llama
+        // 3's "<|begin_of_text|>"), and asking llama_tokenize to add it as
+        // well started every prompt with BOS twice - llama.cpp complains
+        // about exactly that in check_double_bos_eos. The families whose
+        // template carries no marker get the token prepended below.
         let n = llama_tokenize(
             vocab,
             promptCstr,
             Int32(promptCstr.count - 1),
             &tokens,
             maxTokens32,
-            true,
+            false,
             true
         )
         guard n > 0 else { throw InferenceError.generationFailed("llama.cpp: tokenize failed") }
         tokens = Array(tokens.prefix(Int(n)))
 
-        // Decode prompt in batches
-        var batch = llama_batch_init(Int32(tokens.count), 0, 1)
+        let bos = llama_vocab_bos(vocab)
+        if llama_vocab_get_add_bos(vocab), tokens.first != bos {
+            tokens.insert(bos, at: 0)
+        }
+
+        // Fit the prompt into the context window, keeping room for the
+        // requested completion. Overlong prompts lose their oldest tokens
+        // (the BOS token is kept so the model still sees a proper sequence
+        // start).
+        //
+        // The budget is measured against the whole window, NOT against what
+        // is left after `nPast`: every engine in this app is stateless and
+        // the caller re-sends the entire conversation on each turn, so the
+        // history is already part of `tokens`. Subtracting `nPast` as well
+        // charged the transcript twice per message and ended a chat with
+        // "context window full" after a handful of turns.
+        let contextSize = Int(Self.contextSize)
+        let reservedForCompletion = min(maxTokens, contextSize / 2)
+        let room = contextSize - reservedForCompletion
+        guard room >= 16 else {
+            throw InferenceError.generationFailed(
+                "llama.cpp: the context window (\(contextSize) tokens) leaves no room for a reply."
+            )
+        }
+        if tokens.count > room {
+            let keepFromEnd = room - 1
+            tokens = [tokens[0]] + Array(tokens.suffix(keepFromEnd))
+        }
+
+        // Rewind the KV cache to the longest prefix it still shares with
+        // this prompt, so only the new tail has to be decoded.
+        try rewindCache(to: tokens)
+
+        // Decode the prompt in slices no larger than the batch the context
+        // was created with. Only the last token of the last slice needs
+        // logits.
+        let batchSize = Int(Self.batchSize)
+        var batch = llama_batch_init(Int32(batchSize), 0, 1)
         defer { llama_batch_free(batch) }
-        for (i, tok) in tokens.enumerated() {
-            batch.token[i] = tok
-            batch.pos[i] = nPast + Int32(i)
-            batch.n_seq_id[i] = 1
-            batch.seq_id[i]?[0] = 0
-            batch.logits[i] = (i == tokens.count - 1) ? 1 : 0
+        // Everything before `nPast` is already in the cache after the
+        // rewind above, so the loop starts there.
+        var offset = Int(nPast)
+        let prefillStart = Date()
+        while offset < tokens.count {
+            let slice = tokens[offset..<min(offset + batchSize, tokens.count)]
+            let isLastSlice = offset + slice.count == tokens.count
+            for (i, tok) in slice.enumerated() {
+                batch.token[i] = tok
+                batch.pos[i] = nPast + Int32(i)
+                batch.n_seq_id[i] = 1
+                batch.seq_id[i]?[0] = 0
+                batch.logits[i] = (isLastSlice && i == slice.count - 1) ? 1 : 0
+            }
+            batch.n_tokens = Int32(slice.count)
+            guard llama_decode(ctx, batch) == 0 else {
+                // A failed decode leaves the cache holding an unknown
+                // number of the batch's tokens, so the mirror can no longer
+                // be trusted. Drop everything: the next turn re-decodes the
+                // conversation instead of building on a bad prefix.
+                dropCache()
+                throw InferenceError.generationFailed("llama.cpp: decode(prompt) failed")
+            }
+            nPast += Int32(slice.count)
+            cachedTokens.append(contentsOf: slice)
+            offset += slice.count
+            if Task.isCancelled { throw InferenceError.cancelled }
         }
-        batch.n_tokens = Int32(tokens.count)
-        guard llama_decode(ctx, batch) == 0 else {
-            throw InferenceError.generationFailed("llama.cpp: decode(prompt) failed")
-        }
-        nPast += Int32(tokens.count)
+        lastPrefill = (tokens.count, Date().timeIntervalSince(prefillStart) * 1000)
 
         // Generation loop.
         // Multibyte characters (Cyrillic, CJK, emoji) are often split across
@@ -280,9 +413,11 @@ actor LlamaContext {
             let rc = llama_decode(ctx, single)
             llama_batch_free(single)
             guard rc == 0 else {
+                dropCache()
                 throw InferenceError.generationFailed("llama.cpp: decode(token) failed")
             }
             nPast += 1
+            cachedTokens.append(tokenNew)
             produced += 1
         }
 
@@ -291,6 +426,61 @@ actor LlamaContext {
             onPiece(String(decoding: pendingUTF8, as: UTF8.self), produced)
         }
         return produced
+    }
+
+    /// Drops every cached token from the first one that differs from
+    /// `tokens`, leaving `nPast` on the shared prefix. The last prompt token
+    /// is never reused: the sampler needs logits, and those only exist for a
+    /// token that was actually decoded in this call.
+    ///
+    /// A partial removal can be refused (sliding-window caches cannot always
+    /// forget a suffix); starting from an empty cache is always valid, so
+    /// that is the fallback.
+    private func rewindCache(to tokens: [llama_token]) throws {
+        guard let ctx else { throw InferenceError.modelNotLoaded }
+        let reusable = min(
+            Self.commonPrefixLength(cachedTokens, tokens),
+            max(tokens.count - 1, 0)
+        )
+        guard reusable < cachedTokens.count else { return }
+        guard let mem = llama_get_memory(ctx) else {
+            throw InferenceError.generationFailed("llama.cpp: no memory handle")
+        }
+        // The previous turn's Metal command buffers can still be in flight;
+        // changing cache state under them is what a GPU fault is made of.
+        llama_synchronize(ctx)
+        if reusable == 0 || !llama_memory_seq_rm(mem, 0, llama_pos(reusable), -1) {
+            llama_memory_seq_rm(mem, 0, -1, -1)
+            nPast = 0
+            cachedTokens = []
+            return
+        }
+        nPast = Int32(reusable)
+        cachedTokens.removeLast(cachedTokens.count - reusable)
+    }
+
+    /// Forgets the whole cache. Used when a decode fails and the cache no
+    /// longer matches the mirror.
+    private func dropCache() {
+        if let ctx {
+            llama_synchronize(ctx)
+            if let mem = llama_get_memory(ctx) {
+                // Removing the whole sequence never fails and, unlike
+                // `llama_memory_clear(mem, true)`, does not zero the KV
+                // buffers - nothing ever reads them again.
+                llama_memory_seq_rm(mem, 0, -1, -1)
+            }
+        }
+        nPast = 0
+        cachedTokens = []
+    }
+
+    /// Length of the longest common prefix of two token sequences.
+    static func commonPrefixLength(_ lhs: [llama_token], _ rhs: [llama_token]) -> Int {
+        var i = 0
+        let limit = min(lhs.count, rhs.count)
+        while i < limit, lhs[i] == rhs[i] { i += 1 }
+        return i
     }
 
     /// Removes and returns the longest prefix of `buffer` that forms complete

@@ -17,6 +17,11 @@ struct SetupView: View {
 
     private var store: InstalledModelsStore { InstalledModelsStore.shared }
 
+    /// Drives the update banner at the top of the ready view. The check
+    /// itself runs in `ContentView` (launch + every foreground); this view
+    /// only renders whatever the checker has already decided.
+    private var updates: UpdateChecker { UpdateChecker.shared }
+
     /// Deep-link channel from `ContentView`. When this flips to a non-nil
     /// id while the Models tab is visible, `SetupView` scrolls to the
     /// matching card and pulses its border. The binding is cleared
@@ -35,14 +40,24 @@ struct SetupView: View {
                     errorView(msg)
                 }
             }
-            .navigationTitle("PRO Local AI Lab")
+            // Applied to the whole state switch, not just the ready state: a
+            // build that is missing an engine makes every card below it a
+            // lie, and a mandatory banner the user cannot even see because
+            // the scan is still running (or failed) is worse than no banner.
+            // As a top safe-area inset it sits under the large title and the
+            // model list scrolls UNDERNEATH it rather than pushing it away.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                updateBanner
+                    .animation(Self.bannerAnimation, value: updates.available)
+            }
+            .navigationTitle("Pocket AI Lab")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showImportSheet = true
                     } label: {
-                        Label("Import from Hugging Face", systemImage: "link.badge.plus")
+                        Label("Import Model", systemImage: "link.badge.plus")
                     }
                     .disabled(scannedDevice == nil)
                 }
@@ -61,6 +76,42 @@ struct SetupView: View {
     private var scannedDevice: DeviceInfo? {
         if case .ready(let device, _) = vm.state { return device }
         return nil
+    }
+
+    private static let bannerAnimation = Animation.spring(response: 0.38,
+                                                          dampingFraction: 0.86)
+
+    /// Pinned under the navigation title rather than scrolled with the model
+    /// list, so it is on screen in the scanning and error states too. "Later"
+    /// collapses it to a one-line strip; only an actual update removes it.
+    ///
+    /// The strip carries its own `.bar` material because the scroll content
+    /// passes behind it - without an opaque backing, model cards would show
+    /// through the gradient card's rounded corners.
+    @ViewBuilder
+    private var updateBanner: some View {
+        if let release = updates.available {
+            UpdateBannerView(
+                release: release,
+                isMandatory: updates.isMandatory,
+                isCollapsed: updates.isCollapsed,
+                onCollapse: {
+                    withAnimation(Self.bannerAnimation) { updates.collapse() }
+                },
+                onExpand: {
+                    withAnimation(Self.bannerAnimation) { updates.expand() }
+                }
+            )
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
+            .background {
+                Rectangle()
+                    .fill(.bar)
+                    .overlay(alignment: .bottom) { Divider() }
+            }
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
     }
 
     enum ModalityFilter: String, CaseIterable, Identifiable {
@@ -196,13 +247,40 @@ struct SetupView: View {
 
                     if !result.incompatible.isEmpty {
                         let filteredIncompat = applyFilters(result.incompatible)
-                        if !filteredIncompat.isEmpty {
+                        // Split so the section header actually matches the
+                        // reason a model is unusable: some don't fit the
+                        // device's RAM, others use a backend this build
+                        // never linked in. Mixing them under "Not enough
+                        // resources" made the latter read like a device
+                        // problem the user could never fix.
+                        let unlinkedBackend = filteredIncompat.filter { !$0.backend.isLinked }
+                        let notEnoughResources = filteredIncompat.filter { $0.backend.isLinked }
+
+                        if !notEnoughResources.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Not enough resources")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
 
-                                ForEach(filteredIncompat) { model in
+                                ForEach(notEnoughResources) { model in
+                                    ModelCardView(
+                                        model: model,
+                                        isRecommended: false,
+                                        isHighlighted: highlightedModelID == model.id
+                                    )
+                                    .opacity(0.45)
+                                    .id(model.id)
+                                }
+                            }
+                        }
+
+                        if !unlinkedBackend.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Not available in this version")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                ForEach(unlinkedBackend) { model in
                                     ModelCardView(
                                         model: model,
                                         isRecommended: false,

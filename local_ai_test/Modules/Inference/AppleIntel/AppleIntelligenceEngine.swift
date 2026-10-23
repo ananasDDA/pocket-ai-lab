@@ -16,6 +16,12 @@ final class AppleIntelligenceEngine: InferenceEngine, @unchecked Sendable {
 
     private var session: LanguageModelSession?
 
+    /// Instructions the live session was built with, so `generate` can tell
+    /// whether the caller's system turn still matches it. FoundationModels
+    /// takes instructions at session construction and offers no way to change
+    /// them afterwards, so a different system prompt means a new session.
+    private var sessionInstructions: String?
+
     var isLoaded: Bool { session != nil }
 
     func load(progress: @escaping @Sendable (LoadProgress) -> Void) async throws {
@@ -23,17 +29,53 @@ final class AppleIntelligenceEngine: InferenceEngine, @unchecked Sendable {
             throw InferenceError.generationFailed("Apple Intelligence is not available on this device.")
         }
         progress(.loadingWeights(0.5))
-        session = LanguageModelSession()
+        sessionInstructions = nil
+        session = Self.makeSession(instructions: nil)
         progress(.ready)
     }
 
     func unload() async {
         session = nil
+        sessionInstructions = nil
     }
 
     func resetConversation() async {
         guard session != nil else { return }
-        session = LanguageModelSession()
+        // The instructions survive a reset - only the transcript is dropped.
+        session = Self.makeSession(instructions: sessionInstructions)
+    }
+
+    /// `LanguageModelSession(instructions:)` is the framework's system-prompt
+    /// channel; passing nil is the same as the plain initializer.
+    private static func makeSession(instructions: String?) -> LanguageModelSession {
+        LanguageModelSession(instructions: instructions)
+    }
+
+    /// Maps the app's unified sampling parameters onto FoundationModels'
+    /// `GenerationOptions`.
+    ///
+    /// `GenerationOptions` exposes exactly three knobs: `sampling`,
+    /// `temperature` and `maximumResponseTokens`. Temperature 0 is expressed
+    /// as `.greedy` rather than as `temperature: 0` — greedy is the framework's
+    /// own name for argmax decoding and is what makes the benchmark's
+    /// deterministic profile mean the same thing here as on the other
+    /// backends. Above 0, `topK` and `seed` are carried by
+    /// `.random(top:seed:)`. `topP` and `repetitionPenalty` have no
+    /// counterpart in the framework and are dropped.
+    private static func generationOptions(
+        from parameters: GenerationParameters
+    ) -> GenerationOptions {
+        guard parameters.temperature > 0 else {
+            return GenerationOptions(
+                sampling: .greedy,
+                maximumResponseTokens: parameters.maxTokens
+            )
+        }
+        return GenerationOptions(
+            sampling: .random(top: max(1, parameters.topK), seed: parameters.seed),
+            temperature: Double(parameters.temperature),
+            maximumResponseTokens: parameters.maxTokens
+        )
     }
 
     func generate(
@@ -43,18 +85,38 @@ final class AppleIntelligenceEngine: InferenceEngine, @unchecked Sendable {
         AsyncThrowingStream { continuation in
             // @MainActor: engine state is main-actor isolated.
             let task = Task { @MainActor [weak self] in
-                guard let self, let session = self.session else {
+                guard let self, self.session != nil else {
+                    continuation.finish(throwing: InferenceError.modelNotLoaded)
+                    return
+                }
+
+                // The system turn is not part of the prompt: FoundationModels
+                // carries it as session instructions, which is where the
+                // framework applies its own weighting. A caller that changes
+                // the system prompt mid-conversation therefore gets a fresh
+                // session rather than a silently ignored instruction.
+                let systemPrompt = turns
+                    .last(where: { $0.role == .system })?
+                    .content
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let wanted = (systemPrompt?.isEmpty == false) ? systemPrompt : nil
+                if wanted != self.sessionInstructions {
+                    self.sessionInstructions = wanted
+                    self.session = Self.makeSession(instructions: wanted)
+                }
+                guard let session = self.session else {
                     continuation.finish(throwing: InferenceError.modelNotLoaded)
                     return
                 }
 
                 do {
                     let prompt = turns.last(where: { $0.role == .user })?.content ?? ""
+                    let options = Self.generationOptions(from: parameters)
                     let start = Date()
                     var previousText = ""
                     var firstTokenReported = false
 
-                    for try await snapshot in session.streamResponse(to: prompt) {
+                    for try await snapshot in session.streamResponse(to: prompt, options: options) {
                         let fullText = snapshot.content
                         let delta = String(fullText.dropFirst(previousText.count))
                         if !delta.isEmpty {

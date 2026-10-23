@@ -1,6 +1,6 @@
 # Scripts
 
-Shell scripts for bootstrapping the backends that live outside the app
+Scripts for bootstrapping the backends that live outside the app
 source tree. Run everything from the project root (`local_ai_test/`).
 
 ## `install_xcframeworks.sh`
@@ -132,3 +132,21 @@ done
 Headers only affect compile-time declarations; the whisper dylib itself is
 unchanged. The app calls only `whisper_*` C entry points, which do not take
 ggml types, so the declaration swap is ABI-safe.
+
+## `build_benchmark_suite.py`
+
+Regenerates the dataset-derived tasks in
+`local_ai_test/Resources/benchmarks.json` from TinyMMLU and IFEval, the two
+sources MLPerf Mobile v6.0 draws its on-device LLM tasks from. Hand-written
+tasks and every existing task id are copied through untouched — ids are the
+key in stored reports, so the script only ever adds.
+
+```bash
+python3 Scripts/build_benchmark_suite.py --dry-run   # summary only
+python3 Scripts/build_benchmark_suite.py             # rewrite the resource
+```
+
+Needs network access and nothing else — no third-party packages. Sampling is
+seeded (`SEED` in the script), so the same dataset revisions always produce
+the same task set. Dataset attribution lives in
+[BENCHMARK_DATA_LICENSES.md](../BENCHMARK_DATA_LICENSES.md).

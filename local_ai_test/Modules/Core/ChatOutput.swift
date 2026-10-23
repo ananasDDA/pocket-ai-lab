@@ -21,6 +21,11 @@ enum ChatOutput: Sendable {
     case diagnostic(Diagnostic)
 
     enum Diagnostic: Sendable, Equatable {
+        /// The exact string the engine is about to feed the model, and the
+        /// template it came from. Emitted once, before the first token, so
+        /// the UI can show what was really sent - history, markers, media
+        /// placeholders and all.
+        case promptRendered(RenderedPrompt)
         case promptProcessed(tokenCount: Int, timeMs: Double)
         case firstTokenLatency(ms: Double)
         case finished(tokensGenerated: Int, tokensPerSecond: Double)

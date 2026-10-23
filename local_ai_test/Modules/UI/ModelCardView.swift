@@ -69,6 +69,8 @@ struct ModelCardView: View {
                 Label("Built-in · Always available", systemImage: "checkmark.seal.fill")
                     .font(.caption)
                     .foregroundStyle(.green)
+            } else if !model.backend.isLinked {
+                backendUnavailableControl
             } else {
                 downloadControl
             }
@@ -143,6 +145,53 @@ struct ModelCardView: View {
     private var highlightStrokeWidth: CGFloat {
         if isHighlighted { return 2.5 }
         return isRecommended ? 1.5 : 1
+    }
+
+    // MARK: - Backend unavailable
+
+    /// Shown instead of `downloadControl` when this model's backend isn't
+    /// linked into the current build binary. Never offers an active
+    /// Install (there is nothing to load it into), and for a model that was
+    /// installed under an older build with the backend linked, keeps Remove
+    /// reachable but drops any entry point into chat since loading would
+    /// just fail with the same error.
+    @ViewBuilder
+    private var backendUnavailableControl: some View {
+        switch downloadState {
+        case .installed:
+            VStack(alignment: .leading, spacing: 6) {
+                unavailableCaption
+                HStack {
+                    Spacer()
+                    Button("Remove") {
+                        showDeleteConfirmation = true
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                }
+            }
+            .alert("Remove Model?", isPresented: $showDeleteConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Remove", role: .destructive) {
+                    downloader.delete(model)
+                }
+            } message: {
+                Text("This will delete \(model.name) (\(diskLabel)) from your device. You can reinstall it later.")
+            }
+
+        default:
+            unavailableCaption
+        }
+    }
+
+    private var unavailableCaption: some View {
+        // `unavailableReason` opens with "... is not available in this
+        // version of the app", which the caption above already says — so
+        // only the caption is shown here. The full reason (with the "why")
+        // still surfaces from the model picker's alert.
+        Label("Not available in this version", systemImage: "exclamationmark.circle")
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 
     // MARK: - Download control

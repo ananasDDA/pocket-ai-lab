@@ -38,6 +38,15 @@ nonisolated struct AIModel: Identifiable, Hashable, Sendable, Codable {
     let licenseName: String?
     /// Where the full license text lives; opened from the acceptance alert.
     let licenseURL: String?
+    /// Name of the Core ML container directory to download — either an
+    /// already-compiled `.mlmodelc` or a `.mlpackage` that still needs
+    /// compiling. Repos routinely ship several: two quantizations of the same
+    /// model, or a `.mlpackage` next to the `.mlmodelc` built from it. nil
+    /// lets the downloader pick the smallest on its own, which is wrong
+    /// whenever both forms of the SAME model are present — the `.mlpackage` is
+    /// smaller and would put an on-device compile back. Pin it, and keep
+    /// `requiresCompilation` in step with the suffix.
+    let preferredPackage: String?
 
     init(
         id: String,
@@ -60,7 +69,8 @@ nonisolated struct AIModel: Identifiable, Hashable, Sendable, Codable {
         source: ModelSource = .curated,
         revision: String? = nil,
         licenseName: String? = nil,
-        licenseURL: String? = nil
+        licenseURL: String? = nil,
+        preferredPackage: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -83,6 +93,7 @@ nonisolated struct AIModel: Identifiable, Hashable, Sendable, Codable {
         self.revision = revision
         self.licenseName = licenseName
         self.licenseURL = licenseURL
+        self.preferredPackage = preferredPackage
     }
 
     /// Effective disk footprint. Core ML models that require on-device
@@ -104,6 +115,7 @@ nonisolated extension AIModel {
         case huggingFaceRepo, requiresAppleIntelligence, contextLength
         case quality, requiresCompilation, preferredGGUFFilename
         case mmprojFilename, source, revision, licenseName, licenseURL
+        case preferredPackage
     }
 
     /// Hand-written so that hand-edited `catalog.json` entries may omit
@@ -132,7 +144,8 @@ nonisolated extension AIModel {
             source: try c.decodeIfPresent(ModelSource.self, forKey: .source) ?? .curated,
             revision: try c.decodeIfPresent(String.self, forKey: .revision),
             licenseName: try c.decodeIfPresent(String.self, forKey: .licenseName),
-            licenseURL: try c.decodeIfPresent(String.self, forKey: .licenseURL)
+            licenseURL: try c.decodeIfPresent(String.self, forKey: .licenseURL),
+            preferredPackage: try c.decodeIfPresent(String.self, forKey: .preferredPackage)
         )
     }
 
@@ -159,6 +172,7 @@ nonisolated extension AIModel {
         try c.encodeIfPresent(revision, forKey: .revision)
         try c.encodeIfPresent(licenseName, forKey: .licenseName)
         try c.encodeIfPresent(licenseURL, forKey: .licenseURL)
+        try c.encodeIfPresent(preferredPackage, forKey: .preferredPackage)
     }
 }
 

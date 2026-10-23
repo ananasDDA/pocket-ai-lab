@@ -78,9 +78,18 @@ struct ImportAnalysis: Sendable {
             return (weights, download)
 
         case .coreMLPackage:
-            let download = ImportAnalyzer.totalBytes(
-                of: files.filter { $0.rfilename.contains(".mlpackage") }
-            )
+            // A repo can ship several variants of the same model; the
+            // downloader takes only the smallest package (see
+            // `ModelDownloader.filterFiles`), so size just that one or the
+            // estimate is several times the real download.
+            let packages = ModelDownloader.mlpackagePaths(in: files)
+            let packaged: [HFSibling]
+            if packages.count > 1, let chosen = ModelDownloader.smallestMLPackage(in: files) {
+                packaged = files.filter { $0.rfilename.hasPrefix(chosen + "/") }
+            } else {
+                packaged = files.filter { $0.rfilename.contains(".mlpackage") }
+            }
+            let download = ImportAnalyzer.totalBytes(of: packaged)
             return (download, download)
 
         case .whisperGGML:
@@ -151,7 +160,7 @@ enum ImportAnalyzer {
 
         let ggufs = names.filter { $0.hasSuffix(".gguf") }
         if !ggufs.isEmpty {
-            let hasMmproj = ggufs.contains { basename($0).lowercased().hasPrefix("mmproj") }
+            let hasMmproj = ggufs.contains { GGUFNaming.isProjector($0) }
             result.append(hasMmproj
                 ? ImportFormat(backend: .llamaCppVision, layout: .ggufWithMmproj)
                 : ImportFormat(backend: .llamaCpp, layout: .singleGGUF))
@@ -184,6 +193,28 @@ enum ImportAnalyzer {
         return result
     }
 
+    // MARK: MLX architecture pre-check
+
+    /// Whether the pinned MLX engine can instantiate this repo, judged from
+    /// config.json's `model_type` before a single weight is downloaded.
+    ///
+    /// Returns nil for repos that offer no MLX format at all: llama.cpp and
+    /// Core ML decide architecture support on their own terms, so gating them
+    /// on the MLX registry would reject models that run perfectly well.
+    static func mlxArchitectureVerdict(for analysis: ImportAnalysis) async -> MLXArchitectureVerdict? {
+        guard analysis.formats.contains(where: { $0.layout == .huggingFaceMLX }) else {
+            return nil
+        }
+        guard let modelType = await HuggingFaceAPI.fetchModelType(
+            repo: analysis.repo, revision: analysis.revision
+        ) else {
+            return .unknown
+        }
+        return MLXArchitectureSupport.isSupported(modelType)
+            ? .supported(modelType)
+            : .unsupported(modelType)
+    }
+
     private static func isVision(tags: [String]) -> Bool {
         let visionTags: Set<String> = [
             "image-text-to-text", "vision", "visual-question-answering",
@@ -200,7 +231,7 @@ enum ImportAnalyzer {
         files
             .filter {
                 $0.rfilename.hasSuffix(".gguf")
-                    && !basename($0.rfilename).lowercased().hasPrefix("mmproj")
+                    && !GGUFNaming.isProjector($0.rfilename)
             }
             .map { GGUFQuantOption(filename: $0.rfilename, size: $0.size ?? 0) }
             .sorted { $0.size < $1.size }
@@ -219,9 +250,17 @@ enum ImportAnalyzer {
     static func mmprojFilename(in files: [HFSibling]) -> String? {
         let projectors = files
             .map(\.rfilename)
-            .filter { basename($0).lowercased().hasPrefix("mmproj") }
+            .filter { GGUFNaming.isProjector($0) }
         // F16 projectors are the safe default when a repo ships several.
-        return projectors.first { $0.uppercased().contains("F16") } ?? projectors.first
+        // "BF16" also contains "F16", so prefer a plain F16 first and fall
+        // back to any half-precision variant before the first file.
+        let isPlainF16: (String) -> Bool = { name in
+            let upper = name.uppercased()
+            return upper.contains("F16") && !upper.contains("BF16")
+        }
+        return projectors.first(where: isPlainF16)
+            ?? projectors.first { $0.uppercased().contains("F16") }
+            ?? projectors.first
     }
 
     static func whisperFilename(in files: [HFSibling]) -> String? {

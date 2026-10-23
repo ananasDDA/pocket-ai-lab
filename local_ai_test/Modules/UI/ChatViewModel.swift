@@ -57,6 +57,10 @@ final class ChatViewModel {
     var selectedModel: AIModel? { store.selectedModel }
     var installedModels: [AIModel] { store.installedModels }
     var inferenceState: InferenceState { inference.state }
+    /// What the engine was doing when it last failed. Lets the status label
+    /// say "generation failed" instead of blaming the load for an error that
+    /// happened long after the model was up.
+    var lastFailurePhase: EngineFailure.Phase? { inference.lastError?.phase }
 
     var currentCapabilities: ModelCapabilities {
         inference.currentCapabilities
@@ -156,13 +160,20 @@ final class ChatViewModel {
             }
             self.isGenerating = true
 
-            if self.inference.state != .ready, let model = self.selectedModel {
+            // A benchmark run left `inference` warm on a DIFFERENT model
+            // (unloadWhenFinished: false): `.ready` alone is not enough to
+            // skip prepare(), or the next message gets silently answered by
+            // whatever model was last benchmarked instead of the one the
+            // user picked in chat.
+            if let model = self.selectedModel,
+               self.inference.currentModelId != model.id || self.inference.state != .ready {
                 await self.inference.prepare(model: model)
             }
             if Task.isCancelled { return }
 
             self.messages.append(ChatMessage(role: .assistant, text: ""))
             let assistantIndex = self.messages.count - 1
+            let probe = PALChatProbe(model: self.selectedModel, attachments: attachments)
 
             do {
                 let turns: [ChatTurn] = self.messages.dropLast().map { msg in
@@ -173,7 +184,7 @@ final class ChatViewModel {
                     )
                 }
 
-                var stream = self.inference.generate(turns: turns, parameters: .default)
+                var stream = probe.tap(self.inference.generate(turns: turns, parameters: .default))
                 if self.speakResponses, let kokoro = self.findInstalledKokoro() {
                     stream = self.media.streamToSpeech(source: stream, using: kokoro)
                 }
@@ -187,6 +198,15 @@ final class ChatViewModel {
                         self.messages[assistantIndex].text += chunk
                     case .audioChunk(let data, let sr, let ch):
                         AudioPlayer.shared.enqueue(data: data, sampleRate: sr, channels: ch)
+                    case .diagnostic(.promptRendered(let prompt)):
+                        // Belongs to the user turn that caused it - the one
+                        // right before the assistant placeholder. Tapping
+                        // that message is what shows it.
+                        let userIndex = assistantIndex - 1
+                        if self.messages.indices.contains(userIndex),
+                           self.messages[userIndex].role == .user {
+                            self.messages[userIndex].sentPrompt = prompt
+                        }
                     case .diagnostic:
                         break
                     }
@@ -200,13 +220,16 @@ final class ChatViewModel {
                         self.messages[assistantIndex].text = "(Empty response)"
                     }
                 }
+                probe.finish(error: nil)
             } catch is CancellationError {
+                probe.finish(error: CancellationError())
                 AudioPlayer.shared.stop()
                 if self.messages.indices.contains(assistantIndex),
                    self.messages[assistantIndex].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     self.messages.remove(at: assistantIndex)
                 }
             } catch {
+                probe.finish(error: error)
                 let cancelled: Bool = {
                     if case InferenceError.cancelled = error { return true }
                     return false

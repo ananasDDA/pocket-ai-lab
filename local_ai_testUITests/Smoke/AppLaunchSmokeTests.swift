@@ -15,6 +15,8 @@ final class AppLaunchSmokeTests: XCTestCase {
     @MainActor
     func testLaunchShowsSetupOrChat() throws {
         let app = XCUIApplication()
+        // Keeps the launched app from sending measurement records.
+        app.launchEnvironment["PAL_ANALYTICS_DISABLED"] = "1"
         app.launch()
 
         // Either the setup tab or the chat tab should appear within 10s.
@@ -30,6 +32,8 @@ final class AppLaunchSmokeTests: XCTestCase {
     @MainActor
     func testDiagnosticsOpensFromChatToolbar() throws {
         let app = XCUIApplication()
+        // Keeps the launched app from sending measurement records.
+        app.launchEnvironment["PAL_ANALYTICS_DISABLED"] = "1"
         app.launch()
 
         // Tap Chat tab if available

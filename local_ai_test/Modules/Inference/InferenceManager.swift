@@ -84,6 +84,9 @@ final class InferenceManager {
         let remainingMB = Self.availableMemoryMB()
         guard remainingMB >= 0, remainingMB < 512 else { return }
 
+        print("[inference] memory warning with \(remainingMB) MB left: unloading "
+              + (currentModelId ?? "(unknown)"))
+        PALAnalytics.shared.noteMemoryPressureUnload()
         currentEngine = nil
         currentModelId = nil
         state = .error("Model unloaded due to memory pressure. Try a smaller model.")
@@ -131,24 +134,26 @@ final class InferenceManager {
 
         state = .loading
         lastError = nil
+        let probe = PALLoadProbe(model)
 
         // Fail fast when the user picked a model whose backend isn't linked
         // into this build. Surfaces a detailed message instead of the
         // generic "Model is not loaded into memory."
         if !model.backend.isLinked {
             let reason = model.backend.unavailableReason
-                ?? "Backend \(model.backend.displayName) is not linked into this build."
+                ?? "This model's engine is not available in this version of the app. Please update the app or pick a model with a different engine."
             let failure = EngineFailure(
                 phase: .load,
                 modelId: model.id,
                 modelName: model.name,
                 backend: model.backend.displayName,
-                summary: "Backend not available in this build",
+                summary: "Model engine not available",
                 detail: reason,
                 underlyingType: "BackendUnavailable"
             )
             lastError = failure
             state = .error(failure.summary)
+            probe.failed("backend_unavailable")
             return
         }
 
@@ -156,13 +161,21 @@ final class InferenceManager {
         // budget. Without this, loading an oversized model is a silent
         // jetsam kill — the app just vanishes with no crash report.
         //
+        // Unlike the recommender (which judges the device against a *stable*
+        // jetsam limit), the preflight asks "what can be allocated right
+        // now" — so it deliberately uses the instantaneous allowance. That
+        // is only meaningful because the previous engine was unloaded and
+        // awaited above, before this measurement: moving the unload after
+        // this point would make the reading count memory we are about to
+        // give back, and reject loads that would have fitted.
+        //
         // The budget depends on how the backend holds its weights:
         //   • MLX / Core ML copy weights into anonymous Metal buffers —
         //     dirty memory, charged 1:1 against the jetsam allowance
         //     (os_proc_available_memory).
         //   • llama.cpp / whisper.cpp mmap their GGUF — clean file-backed
         //     pages that jetsam does NOT charge; the binding ceiling is the
-        //     Metal working set (~0.67 × RAM).
+        //     Metal working set and physical RAM.
         let budgetMB = Self.memoryBudgetMB(for: model.backend)
         let neededMB = Int64(model.ramRequiredGB * 1024)
         if budgetMB > 0, neededMB > budgetMB {
@@ -180,6 +193,7 @@ final class InferenceManager {
             )
             lastError = failure
             state = .error(failure.summary)
+            probe.failed("memory_preflight")
             return
         }
 
@@ -200,7 +214,9 @@ final class InferenceManager {
             currentEngine = engine
             currentModelId = model.id
             state = .ready
+            probe.finished()
         } catch {
+            probe.failed(error)
             let failure = EngineFailure(
                 phase: .load,
                 modelId: model.id,
@@ -300,6 +316,11 @@ final class InferenceManager {
         await engine?.unload()
     }
 
+    /// The loaded model's own chat template, for the template sheet.
+    func currentChatTemplate() async -> String? {
+        await currentEngine?.embeddedChatTemplate()
+    }
+
     func resetConversation() async {
         await currentEngine?.resetConversation()
     }
@@ -312,14 +333,31 @@ final class InferenceManager {
 
     /// Loadable-model budget in MB for a backend — see the preflight comment
     /// in `prepare(model:)` for the reasoning. 0 when nothing is measurable.
+    ///
+    /// The mmap branch mirrors `DeviceInfo.mmapCeilingGB` (keep the two in
+    /// sync): the Metal working set alone lets a 4 GB GGUF onto a 6 GB phone,
+    /// where it thrashes physical RAM into a freeze-then-kill, so physical
+    /// RAM minus a system reserve caps it as well.
     static func memoryBudgetMB(for backend: ModelBackend) -> Int64 {
         switch backend {
         case .llamaCpp, .llamaCppVision, .whisperCpp:
             let ramMB = Int64(ProcessInfo.processInfo.physicalMemory) / (1024 * 1024)
             let workingSetMB = Int64(MTLCreateSystemDefaultDevice()?.recommendedMaxWorkingSetSize ?? 0) / (1024 * 1024)
-            if workingSetMB > 0 { return min(workingSetMB, ramMB * 7 / 10) }
-            return ramMB * 2 / 3
+            let metalCeilingMB = workingSetMB > 0
+                ? min(workingSetMB, ramMB * 7 / 10)
+                : ramMB * 2 / 3
+            // Small devices (< 6.5 GB measured) additionally leave the system
+            // a reserve, scaled so it never swallows most of a tiny machine.
+            // 8 GB and up keep the pure Metal ceiling — 1.0 behavior.
+            guard ramMB < 6656 else { return metalCeilingMB }
+            let systemReserveMB = min(3072, ramMB * 45 / 100)
+            // Floor at a small positive value: returning 0 would trip the
+            // "budget unmeasurable" guard in prepare() and skip the preflight
+            // on exactly the devices that need it most.
+            return max(min(metalCeilingMB, ramMB - systemReserveMB), 256)
         default:
+            // Dirty-memory backends: what the process may still allocate at
+            // this very moment, measured after the previous engine unloaded.
             return max(availableMemoryMB(), 0)
         }
     }

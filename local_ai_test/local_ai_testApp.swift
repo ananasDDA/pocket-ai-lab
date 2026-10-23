@@ -21,6 +21,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 struct local_ai_testApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
+    init() {
+        PALAnalytics.shared.start()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

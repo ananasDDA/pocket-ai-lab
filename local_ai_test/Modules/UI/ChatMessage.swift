@@ -11,6 +11,11 @@ struct ChatMessage: Identifiable {
     var text: String
     var attachments: [ChatAttachment]
     let timestamp: Date = .now
+    /// For a user message: the exact transcript this message produced,
+    /// history and media markers included, and the template that wrote it.
+    /// Filled in when generation starts; nil for messages sent before the
+    /// engine could report one.
+    var sentPrompt: RenderedPrompt?
 
     init(role: Role, text: String, attachments: [ChatAttachment] = []) {
         self.role = role
@@ -38,6 +43,9 @@ enum ChatDisplayStyle: String, CaseIterable, Identifiable {
     /// Document-style chat layout: assistant replies rendered as
     /// full-width formatted Markdown, no bubble chrome.
     case document
+    /// Exactly what crosses the engine boundary: the rendered prompt for
+    /// each user turn and the model's raw reply, monospaced, unformatted.
+    case raw
 
     var id: String { rawValue }
 
@@ -45,6 +53,7 @@ enum ChatDisplayStyle: String, CaseIterable, Identifiable {
         switch self {
         case .bubble:   return "Bubbles"
         case .document: return "Document (Markdown)"
+        case .raw:      return "Raw (as sent)"
         }
     }
 
@@ -52,6 +61,7 @@ enum ChatDisplayStyle: String, CaseIterable, Identifiable {
         switch self {
         case .bubble:   return "text.bubble"
         case .document: return "doc.text"
+        case .raw:      return "curlybraces"
         }
     }
 }

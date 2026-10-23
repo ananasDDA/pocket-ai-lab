@@ -165,7 +165,11 @@ enum HuggingFaceAPI {
         // A scheme that did not resolve to a HF host points somewhere else.
         if hadScheme && !matchedHost { return nil }
 
-        var parts = text.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        // An empty path segment ("owner//repo") is not a valid repo path;
+        // only a leading slash left over from the host is tolerated.
+        let path = text.hasPrefix("/") ? String(text.dropFirst()) : text
+        if path.contains("//") { return nil }
+        var parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         // huggingface.co/models/owner/repo is a valid canonical form too.
         if parts.first?.lowercased() == "models" { parts.removeFirst() }
         // Spaces and datasets are different resources, not model repos.
@@ -268,6 +272,33 @@ enum HuggingFaceAPI {
         // Multimodal configs nest the language model's settings.
         if let nested = json["text_config"] as? [String: Any],
            let value = nested["max_position_embeddings"] as? Int {
+            return value
+        }
+        return nil
+    }
+
+    /// `model_type` from the repo's config.json — the string mlx-swift
+    /// dispatches on when it builds a model. Returns nil when the repo has no
+    /// config.json or does not declare one; that is not the same as
+    /// "unsupported" and the caller must not treat it as such.
+    static func fetchModelType(repo: String, revision: String?) async -> String? {
+        let rev = revision ?? "main"
+        guard let url = URL(string: "\(webHost)/\(repo)/resolve/\(rev)/config.json") else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        if let value = json["model_type"] as? String { return value }
+        // Some multimodal configs only name the architecture on the nested
+        // language model.
+        if let nested = json["text_config"] as? [String: Any],
+           let value = nested["model_type"] as? String {
             return value
         }
         return nil

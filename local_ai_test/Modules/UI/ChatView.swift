@@ -15,6 +15,11 @@ import UniformTypeIdentifiers
 struct ChatView: View {
     @Binding var selectedTab: Int
     @Binding var focusedModelID: String?
+    /// Called once the Diagnostics sheet has actually finished dismissing
+    /// (SwiftUI's `onDismiss:`, not the moment the dismiss is requested), so
+    /// `ContentView` can safely present the build-test cover right after -
+    /// see `ContentView.presentBuildTestCoverIfNeeded()`.
+    var onDiagnosticsDismiss: (() -> Void)? = nil
     @State private var vm = ChatViewModel()
     @State private var showModelPicker = false
     @State private var showPhotoPicker = false
@@ -27,6 +32,9 @@ struct ChatView: View {
     @State private var showSpeakInfo = false
     @State private var showKokoroMissing = false
     @State private var showLiveMetrics = false
+    @State private var showChatTemplate = false
+    /// Non-nil while the transcript of one message is on screen.
+    @State private var inspectedPrompt: RenderedPrompt?
     @Bindable private var liveMetrics = LiveDeviceMetrics.shared
     @AppStorage("chatDisplayStyle") private var chatStyleRaw: String = ChatDisplayStyle.bubble.rawValue
     @Bindable private var recorder = AudioRecorder.shared
@@ -100,6 +108,12 @@ struct ChatView: View {
             Install it once and this toggle will turn on automatically.
             """)
         }
+        .sheet(isPresented: $showChatTemplate) {
+            ChatTemplateSheet(model: vm.selectedModel)
+        }
+        .sheet(item: $inspectedPrompt) { prompt in
+            PromptInspectorSheet(prompt: prompt)
+        }
         .sheet(isPresented: $showSpeakInfo) {
             SpeakResponseInfoSheet(isPresented: $showSpeakInfo)
                 .presentationDetents([.medium, .large])
@@ -110,7 +124,7 @@ struct ChatView: View {
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $showDiagnostics) {
+        .sheet(isPresented: $showDiagnostics, onDismiss: { onDiagnosticsDismiss?() }) {
             DiagnosticsView()
         }
         .sheet(isPresented: $showErrorDetail) {
@@ -211,12 +225,24 @@ struct ChatView: View {
     // MARK: - Options menu
 
     /// Top-right ellipsis menu. Order is deliberate:
-    ///  1. Speak response (with an "About" help pane)
-    ///  2. Chat style (bubbles vs markdown document)
-    ///  3. Testing (self-tests & benchmarks — formerly "Diagnostics")
-    ///  4. Clear chat — destructive, always last.
+    ///  1. Chat template (what the model is actually being sent)
+    ///  2. Speak response (with an "About" help pane)
+    ///  3. Chat style (bubbles / markdown document / raw)
+    ///  4. Testing (self-tests & benchmarks — formerly "Diagnostics")
+    ///  5. Clear chat — destructive, always last.
     private var chatOptionsMenu: some View {
         Menu {
+            // First on purpose: the chat format is invisible and decides
+            // answer quality, so it is the first thing to check when a
+            // model behaves oddly.
+            Section {
+                Button {
+                    showChatTemplate = true
+                } label: {
+                    Label("Chat template", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
+            }
+
             // Hidden while no TTS model exists in the catalog: the Kokoro
             // engine is not production-ready and its catalog entry is pulled
             // for 1.0. When a working entry ships via the remote catalog,
@@ -374,7 +400,13 @@ struct ChatView: View {
             // selector button, and a nested button used to swallow the tap —
             // making it impossible to open the picker while an error was
             // showing. Details live in the banner below the toolbar.
-            Text("Model failed to load")
+            //
+            // A generation that fails puts the manager into `.error` too, so
+            // the label has to name the phase: a chat that answered three
+            // messages and then hit an error was not a model that "failed to
+            // load", and saying so sent at least one bug report down the
+            // wrong path.
+            Text(vm.lastFailurePhase == .generate ? "Generation failed" : "Model failed to load")
                 .font(.caption2)
                 .foregroundStyle(.red)
         case .generating:
@@ -460,7 +492,9 @@ struct ChatView: View {
                         emptyState
                     } else {
                         ForEach(vm.messages) { msg in
-                            MessageRowView(message: msg, style: chatStyle)
+                            MessageRowView(message: msg, style: chatStyle) { prompt in
+                                inspectedPrompt = prompt
+                            }
                                 .id(msg.id)
                         }
                         if vm.isGenerating, let last = vm.messages.last, last.text.isEmpty {
@@ -702,12 +736,67 @@ private struct WaveformBar: View {
 private struct MessageRowView: View {
     let message: ChatMessage
     let style: ChatDisplayStyle
+    /// Called when the user taps their own message, with the transcript
+    /// that message produced. nil for messages sent before the engine
+    /// started reporting it.
+    var onInspect: ((RenderedPrompt) -> Void)?
 
     var body: some View {
-        switch style {
-        case .bubble:    bubbleLayout
-        case .document:  documentLayout
+        Group {
+            switch style {
+            case .bubble:    bubbleLayout
+            case .document:  documentLayout
+            case .raw:       rawLayout
+            }
         }
+        // Only user turns carry a prompt: the tap target is exactly the
+        // messages there is something to show for.
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let prompt = message.sentPrompt { onInspect?(prompt) }
+        }
+    }
+
+    // MARK: - Raw layout
+
+    /// Everything as it crosses the engine boundary: the rendered prompt
+    /// for a user turn (history, chat markers and media placeholders
+    /// included) and the model's reply exactly as it arrived. Nothing here
+    /// is parsed as Markdown - that is the point.
+    @ViewBuilder
+    private var rawLayout: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(message.role == .user ? "SENT" : "RECEIVED")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(message.role == .user ? Color.blue : Color.green)
+                if let source = message.sentPrompt?.source {
+                    Text(source.label)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !message.attachments.isEmpty {
+                    Label("\(message.attachments.count)", systemImage: "paperclip")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text(rawBody)
+                .font(.system(.footnote, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private var rawBody: String {
+        if message.role == .user {
+            return message.sentPrompt?.text
+                ?? "(this message was sent before the app recorded prompts)"
+        }
+        return message.text.isEmpty ? "(no output yet)" : message.text
     }
 
     // MARK: - Bubble layout (iMessage-style)
@@ -968,7 +1057,7 @@ private struct TypingIndicator: View {
                     .padding(.vertical, 10)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
                     .frame(maxWidth: .infinity, alignment: .leading)
-            case .document:
+            case .document, .raw:
                 dots
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -1085,7 +1174,8 @@ private struct ModelPickerSheet: View {
                 Alert(
                     title: Text("\(backend.displayName) not available"),
                     message: Text(backend.unavailableReason
-                        ?? "This backend is not linked into the current build."),
+                        ?? "This model's engine is not available in this version of the app. "
+                        + "Please update the app or pick a model with a different engine."),
                     dismissButton: .default(Text("OK"))
                 )
             }

@@ -18,11 +18,29 @@ struct DiagnosticsView: View {
     @State private var exportJSON = ""
     @State private var showingExport = false
     @State private var showErrorDetail = false
+    /// Owns the "Model Benchmark" section's selection, run lifecycle, and
+    /// every sheet/cover/alert it can present. Kept here (rather than on
+    /// `BenchmarkSection` itself) so all of that presentation attaches to
+    /// this `List`, not to a `Section` row that scrolling can recycle.
+    @State private var benchmarkModel = BenchmarkSectionModel()
+    /// Owns the "Build test" section's options and its confirmation alert.
+    /// Same reasoning as `benchmarkModel`: presentation belongs on the
+    /// `List`, not on a recyclable `Section` row. It does NOT own the live
+    /// screen - `ContentView` presents that, bound to
+    /// `BuildTestRunner.shared.isRunning`, so an Xcode-started sweep is
+    /// watchable too.
+    @State private var buildTestModel = BuildTestSectionModel()
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        @Bindable var benchmarkModel = benchmarkModel
+        @Bindable var buildTestModel = buildTestModel
         NavigationStack {
             List {
+                BenchmarkSection(model: benchmarkModel)
+
+                BuildTestSection(model: buildTestModel)
+
                 Section("Available memory") {
                     Text("\(InferenceManager.availableMemoryMB()) MB")
                         .font(.system(.body, design: .monospaced))
@@ -94,6 +112,94 @@ struct DiagnosticsView: View {
             }
             .navigationTitle("Testing")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: BenchmarkReport.self) { report in
+                BenchmarkReportView(report: report)
+            }
+            // MARK: Build test section presentation
+            //
+            // Starting the sweep also closes Diagnostics: the live screen is
+            // a `fullScreenCover` on the app root, and the root cannot
+            // present it while this sheet is still up.
+            .alert(
+                "Start the build test?",
+                isPresented: $buildTestModel.showStartConfirm
+            ) {
+                Button("Cancel", role: .cancel) {}
+                Button("Start") {
+                    buildTestModel.start()
+                    dismiss()
+                }
+            } message: {
+                Text("Every catalog model this device can run will be downloaded, "
+                    + "benchmarked, and then deleted. Models you installed yourself "
+                    + "are kept.\n\nSet Auto-Lock to Never in Settings for the "
+                    + "duration, keep the phone plugged in, and stay on Wi-Fi.")
+            }
+            // MARK: Model Benchmark section lifecycle + presentation
+            //
+            // Moved up from `BenchmarkSection` (a `Section` inside this
+            // `List`): a `.task`/`.onAppear` on a row can refire on scroll,
+            // and a `.fullScreenCover`/`.sheet`/`.alert` anchored to a
+            // recyclable row is fragile. All of it lives here instead, next
+            // to the `navigationDestination` above.
+            .task {
+                // Best-effort refresh of the task suite. Never blocks a run
+                // -- a run started before this lands just uses whatever was
+                // cached or bundled already.
+                await RemoteBenchmarkSuite.shared.refresh()
+            }
+            .onAppear {
+                benchmarkModel.ensureSelection()
+                // A suite deleted on the suites screen must not stay selected
+                // here; the run would fail with `customSuiteMissing`.
+                benchmarkModel.ensureSuiteSelection()
+            }
+            .onChange(of: InstalledModelsStore.shared.installedModels) { _, _ in
+                benchmarkModel.ensureSelection()
+            }
+            .fullScreenCover(item: $benchmarkModel.runningJob) { job in
+                BenchmarkRunView(model: job.model, options: job.options) { result in
+                    benchmarkModel.handleRunFinished(result)
+                }
+            }
+            .sheet(item: $benchmarkModel.justFinishedReport) { report in
+                NavigationStack {
+                    BenchmarkReportView(report: report)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { benchmarkModel.justFinishedReport = nil }
+                            }
+                        }
+                }
+            }
+            .alert(
+                "Unload the current model?",
+                isPresented: Binding(
+                    get: { benchmarkModel.pendingRunModel != nil },
+                    set: { if !$0 { benchmarkModel.pendingRunModel = nil } }
+                ),
+                presenting: benchmarkModel.pendingRunModel
+            ) { model in
+                Button("Cancel", role: .cancel) { benchmarkModel.pendingRunModel = nil }
+                Button("Run Benchmark") {
+                    benchmarkModel.pendingRunModel = nil
+                    benchmarkModel.startRun(model: model)
+                }
+            } message: { model in
+                Text("A model is currently loaded in chat. Benchmarking \(model.name) will unload it first.")
+            }
+            .alert(
+                "Benchmark Failed",
+                isPresented: Binding(
+                    get: { benchmarkModel.runError != nil },
+                    set: { if !$0 { benchmarkModel.runError = nil } }
+                ),
+                presenting: benchmarkModel.runError
+            ) { _ in
+                Button("OK", role: .cancel) { benchmarkModel.runError = nil }
+            } message: { error in
+                Text(error.message)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }

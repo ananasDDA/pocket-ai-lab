@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "models": [
     {
       "id": "apple-intelligence",
@@ -321,6 +321,150 @@
       "licenseURL": "https://ai.google.dev/gemma/terms"
     },
     {
+      "id": "unsloth/gemma-4-E2B-it-GGUF",
+      "name": "Gemma 4 E2B (GGUF, Vision)",
+      "family": "Gemma",
+      "parameterSize": "E2B",
+      "quantization": "Q4_K_M",
+      "backend": "llamaCppVision",
+      "capabilities": [
+        "textIn",
+        "imageIn",
+        "textOut"
+      ],
+      "fileLayout": "ggufWithMmproj",
+      "ramRequiredGB": 5.0,
+      "diskSizeGB": 4.1,
+      "huggingFaceRepo": "unsloth/gemma-4-E2B-it-GGUF",
+      "requiresAppleIntelligence": false,
+      "contextLength": 8192,
+      "quality": 2,
+      "requiresCompilation": false,
+      "preferredGGUFFilename": "gemma-4-E2B-it-Q4_K_M.gguf",
+      "mmprojFilename": "mmproj-F16.gguf",
+      "source": "curated"
+    },
+    {
+      "id": "unsloth/Qwen3.5-0.8B-GGUF",
+      "name": "Qwen 3.5 0.8B (GGUF, Vision)",
+      "family": "Qwen",
+      "parameterSize": "0.8B",
+      "quantization": "Q4_K_M",
+      "backend": "llamaCppVision",
+      "capabilities": [
+        "textIn",
+        "imageIn",
+        "textOut"
+      ],
+      "fileLayout": "ggufWithMmproj",
+      "ramRequiredGB": 1.5,
+      "diskSizeGB": 0.8,
+      "huggingFaceRepo": "unsloth/Qwen3.5-0.8B-GGUF",
+      "requiresAppleIntelligence": false,
+      "contextLength": 8192,
+      "quality": 1,
+      "requiresCompilation": false,
+      "preferredGGUFFilename": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "mmprojFilename": "mmproj-F16.gguf",
+      "source": "curated"
+    },
+    {
+      "id": "unsloth/Qwen3.5-2B-GGUF",
+      "name": "Qwen 3.5 2B (GGUF, Vision)",
+      "family": "Qwen",
+      "parameterSize": "2B",
+      "quantization": "Q4_K_M",
+      "backend": "llamaCppVision",
+      "capabilities": [
+        "textIn",
+        "imageIn",
+        "textOut"
+      ],
+      "fileLayout": "ggufWithMmproj",
+      "ramRequiredGB": 2.8,
+      "diskSizeGB": 2.0,
+      "huggingFaceRepo": "unsloth/Qwen3.5-2B-GGUF",
+      "requiresAppleIntelligence": false,
+      "contextLength": 8192,
+      "quality": 2,
+      "requiresCompilation": false,
+      "preferredGGUFFilename": "Qwen3.5-2B-Q4_K_M.gguf",
+      "mmprojFilename": "mmproj-F16.gguf",
+      "source": "curated"
+    },
+    {
+      "id": "unsloth/Qwen3.5-4B-GGUF",
+      "name": "Qwen 3.5 4B (GGUF, Vision)",
+      "family": "Qwen",
+      "parameterSize": "4B",
+      "quantization": "Q4_K_M",
+      "backend": "llamaCppVision",
+      "capabilities": [
+        "textIn",
+        "imageIn",
+        "textOut"
+      ],
+      "fileLayout": "ggufWithMmproj",
+      "ramRequiredGB": 4.4,
+      "diskSizeGB": 3.5,
+      "huggingFaceRepo": "unsloth/Qwen3.5-4B-GGUF",
+      "requiresAppleIntelligence": false,
+      "contextLength": 8192,
+      "quality": 2,
+      "requiresCompilation": false,
+      "preferredGGUFFilename": "Qwen3.5-4B-Q4_K_M.gguf",
+      "mmprojFilename": "mmproj-F16.gguf",
+      "source": "curated"
+    },
+    {
+      "id": "LiquidAI/LFM2-1.2B-GGUF",
+      "name": "LFM2 1.2B (GGUF)",
+      "family": "LFM",
+      "parameterSize": "1.2B",
+      "quantization": "Q4_K_M",
+      "backend": "llamaCpp",
+      "capabilities": [
+        "textIn",
+        "textOut"
+      ],
+      "fileLayout": "singleGGUF",
+      "ramRequiredGB": 1.4,
+      "diskSizeGB": 0.8,
+      "huggingFaceRepo": "LiquidAI/LFM2-1.2B-GGUF",
+      "requiresAppleIntelligence": false,
+      "contextLength": 4096,
+      "quality": 1,
+      "requiresCompilation": false,
+      "preferredGGUFFilename": "LFM2-1.2B-Q4_K_M.gguf",
+      "source": "curated",
+      "licenseName": "LFM Open License v1.0",
+      "licenseURL": "https://huggingface.co/LiquidAI/LFM2-1.2B-GGUF/blob/main/LICENSE"
+    },
+    {
+      "id": "LiquidAI/LFM2-2.6B-GGUF",
+      "name": "LFM2 2.6B (GGUF)",
+      "family": "LFM",
+      "parameterSize": "2.6B",
+      "quantization": "Q4_K_M",
+      "backend": "llamaCpp",
+      "capabilities": [
+        "textIn",
+        "textOut"
+      ],
+      "fileLayout": "singleGGUF",
+      "ramRequiredGB": 2.2,
+      "diskSizeGB": 1.6,
+      "huggingFaceRepo": "LiquidAI/LFM2-2.6B-GGUF",
+      "requiresAppleIntelligence": false,
+      "contextLength": 4096,
+      "quality": 1,
+      "requiresCompilation": false,
+      "preferredGGUFFilename": "LFM2-2.6B-Q4_K_M.gguf",
+      "source": "curated",
+      "licenseName": "LFM Open License v1.0",
+      "licenseURL": "https://huggingface.co/LiquidAI/LFM2-2.6B-GGUF/blob/main/LICENSE"
+    },
+    {
       "id": "ggerganov/whisper.cpp/tiny.en",
       "name": "Whisper tiny (English)",
       "family": "Whisper",
@@ -365,24 +509,26 @@
       "source": "curated"
     },
     {
-      "id": "apple/mistral-coreml",
-      "name": "Mistral 7B (Core ML)",
-      "family": "Mistral",
-      "parameterSize": "7B",
-      "quantization": "palettized-4bit",
+      "id": "anziank/grio-qwen2.5-1.5b-instruct-coreml-stateful-int8",
+      "name": "Qwen2.5 1.5B (Core ML)",
+      "family": "Qwen",
+      "parameterSize": "1.5B",
+      "quantization": "int8-W8A16",
       "backend": "coreML",
       "capabilities": [
         "textIn",
         "textOut"
       ],
       "fileLayout": "coreMLPackage",
-      "ramRequiredGB": 4.2,
-      "diskSizeGB": 4.3,
-      "huggingFaceRepo": "apple/mistral-coreml",
+      "ramRequiredGB": 2.5,
+      "diskSizeGB": 2.3,
+      "huggingFaceRepo": "anziank/grio-qwen2.5-1.5b-instruct-coreml-stateful-int8",
       "requiresAppleIntelligence": false,
-      "contextLength": 4096,
-      "quality": 2,
-      "requiresCompilation": true,
+      "contextLength": 512,
+      "quality": 1,
+      "requiresCompilation": false,
+      "preferredPackage": "Qwen2.5-1.5B-Instruct-stateful-int8.mlmodelc",
+      "revision": "a9442469f80fc807d5f2e3a138a69fb023f9f7d7",
       "source": "curated"
     }
   ]

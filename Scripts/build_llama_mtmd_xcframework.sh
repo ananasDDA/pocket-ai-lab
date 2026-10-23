@@ -21,7 +21,14 @@
 #   5. Replaces Vendor/llama.xcframework with the mtmd-enabled build.
 #
 # Environment:
-#   LLAMA_REV    git revision / tag / branch to build.        (default: master)
+#   LLAMA_REV    git revision / tag / branch to build.        (default: b8882)
+#                The default is THE revision the Swift wrappers were written
+#                against and the one every release so far shipped. Later
+#                master changed the C API (llama_sampler_init_penalties,
+#                mtmd_input_text, mtmd_helper_bitmap_init_from_buf) and the
+#                ggml enums whisper.cpp v1.8.4 shares, so a build from an
+#                unpinned master does not compile against this app. Bump the
+#                pin only together with the Swift side, and test on device.
 #   PLATFORMS    comma-separated list of platforms to build.  (default: ios-device,ios-sim,macos)
 #                allowed values: ios-device, ios-sim, macos,
 #                visionos, visionos-sim, tvos-sim, tvos-device
@@ -42,7 +49,7 @@ VENDOR="$ROOT/Vendor"
 TMP="$ROOT/build-tmp"
 SRC="$TMP/llama.cpp"
 
-LLAMA_REV="${LLAMA_REV:-master}"
+LLAMA_REV="${LLAMA_REV:-b8882}"
 PLATFORMS="${PLATFORMS:-ios-device,ios-sim,macos}"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
 
@@ -287,6 +294,16 @@ fi
 
 rm -rf "$VENDOR/llama.xcframework"
 mv "build-apple/llama.xcframework" "$VENDOR/llama.xcframework"
+
+# Stamp the framework with what it was built from. Vendor/ is not in git,
+# so without this nobody can tell a verified build from a stray one - the
+# release checklist reads this file.
+cat > "$VENDOR/llama.xcframework/LLAMA_REV" <<EOF
+rev=$LLAMA_REV
+commit=$LLAMA_SHA
+platforms=$PLATFORMS
+built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
 
 popd >/dev/null
 

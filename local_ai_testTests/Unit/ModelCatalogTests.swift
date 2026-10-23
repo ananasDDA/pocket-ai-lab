@@ -73,7 +73,11 @@ struct ModelCatalogTests {
                 #expect(model.fileLayout == .whisperGGML)
             case .coreML, .coreMLKokoro:
                 #expect(model.fileLayout == .coreMLPackage)
-                #expect(model.requiresCompilation == true)
+                // A pinned .mlmodelc is downloaded precompiled; a .mlpackage
+                // (or no pin) must be compiled on device.
+                let precompiled = model.preferredPackage?.hasSuffix(".mlmodelc") ?? false
+                #expect(model.requiresCompilation == !precompiled,
+                        "\(model.id): requiresCompilation must match the pinned container type")
             case .mlx, .mlxVision, .mlxAudio:
                 #expect(model.fileLayout == .huggingFaceMLX)
             case .appleIntelligence, .coreMLWhisper:
@@ -102,5 +106,19 @@ struct ModelCatalogTests {
             let models = ModelCatalog.models(forBackendFamily: family)
             #expect(!models.isEmpty, "No models for backend family \(family.rawValue)")
         }
+    }
+
+    // MARK: - Completion status
+
+    // A background transfer that lost the network resumes with a Range
+    // request and finishes with 206; the file is whole. Rejecting it threw
+    // away finished downloads during overnight sweeps.
+    @Test func partialContentCountsAsAFinishedDownload() {
+        #expect(ModelDownloader.isSuccessfulDownloadStatus(200))
+        #expect(ModelDownloader.isSuccessfulDownloadStatus(206))
+        #expect(!ModelDownloader.isSuccessfulDownloadStatus(401))
+        #expect(!ModelDownloader.isSuccessfulDownloadStatus(403))
+        #expect(!ModelDownloader.isSuccessfulDownloadStatus(404))
+        #expect(!ModelDownloader.isSuccessfulDownloadStatus(500))
     }
 }

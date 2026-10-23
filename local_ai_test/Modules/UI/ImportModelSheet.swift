@@ -2,12 +2,14 @@
 //  ImportModelSheet.swift
 //  local_ai_test
 //
-//  "Paste a Hugging Face link, get a model card" pipeline. Three steps in one
-//  sheet: enter a link → inspect what the repo actually contains → download.
+//  Two ways in, one sheet. "Paste a Hugging Face link, get a model card":
+//  enter a link → inspect what the repo actually contains → download. Or
+//  "Import from Files": pick a .gguf the user already has → copy it in.
 //
 
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct ImportModelSheet: View {
 
@@ -25,20 +27,49 @@ struct ImportModelSheet: View {
     @State private var spaces: [String] = []
     @State private var webLink: WebLink?
     @State private var isStartingDownload = false
+    /// Result of the pre-download architecture check. nil while unchecked or
+    /// for repos with no MLX format at all.
+    @State private var mlxVerdict: MLXArchitectureVerdict?
+
+    // Local ".gguf from Files" import.
+    @State private var showFileImporter = false
+    @State private var pendingReplace: PendingLocalImport?
+    @State private var showReplacePrompt = false
+    /// Descriptor of the file currently being copied in, used to read the
+    /// copy's progress back out of the downloader.
+    @State private var importingModel: AIModel?
 
     private enum Step {
         case input
         case checking
         case analyzed(ImportAnalysis)
+        /// Copying a picked file into the app container; carries its name.
+        case copying(String)
     }
+
+    /// A picked file that would overwrite an already-imported model, held
+    /// until the user answers the confirmation.
+    private struct PendingLocalImport {
+        let candidate: LocalGGUFCandidate
+        let url: URL
+    }
+
+    /// `.gguf` has no registered UTI, so the extension-derived type is used
+    /// when the system can build one and plain data is kept alongside it —
+    /// without the fallback the file would not be selectable at all.
+    private static let ggufContentTypes: [UTType] = {
+        if let gguf = UTType(filenameExtension: "gguf") { return [gguf, .data] }
+        return [.data]
+    }()
 
     var body: some View {
         NavigationStack {
             Group {
                 switch step {
-                case .input:               inputStep
-                case .checking:            checkingStep
+                case .input:                inputStep
+                case .checking:             checkingStep
                 case .analyzed(let result): analyzedStep(result)
+                case .copying(let filename): copyingStep(filename)
                 }
             }
             .navigationTitle("Import model")
@@ -49,6 +80,33 @@ struct ImportModelSheet: View {
                 }
             }
             .sheet(item: $webLink) { SafariView(url: $0.url) }
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: Self.ggufContentTypes,
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    Task { await prepareLocalImport(url) }
+                case .failure(let error):
+                    errorMessage = error.localizedDescription
+                }
+            }
+            .alert(
+                "Replace imported model?",
+                isPresented: $showReplacePrompt,
+                presenting: pendingReplace
+            ) { pending in
+                Button("Cancel", role: .cancel) { pendingReplace = nil }
+                Button("Replace", role: .destructive) {
+                    pendingReplace = nil
+                    Task { await runLocalImport(candidate: pending.candidate, sourceURL: pending.url) }
+                }
+            } message: { pending in
+                Text("\(pending.candidate.filename) is already imported. Replacing it "
+                     + "overwrites the copy that is on the device now.")
+            }
         }
     }
 
@@ -96,6 +154,21 @@ struct ImportModelSheet: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+
+            Section {
+                Button {
+                    errorMessage = nil
+                    showFileImporter = true
+                } label: {
+                    Label("Import from Files", systemImage: "folder.badge.plus")
+                }
+            } header: {
+                Text("Local file")
+            } footer: {
+                Text("Pick a .gguf file already on this device or in iCloud Drive. "
+                     + "It is copied into the app and runs through llama.cpp. "
+                     + "Vision projectors (mmproj) cannot be imported on their own.")
+            }
         }
     }
 
@@ -106,6 +179,39 @@ struct ImportModelSheet: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Local file copy
+
+    private func copyingStep(_ filename: String) -> some View {
+        VStack(spacing: 14) {
+            ProgressView(value: copyProgress)
+                .progressViewStyle(.linear)
+                .frame(maxWidth: 280)
+            Text("Copying \(filename)")
+                .font(.subheadline)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+            Text("\(Int(copyProgress * 100))% copied")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Large files take a while. You can close this sheet - the copy "
+                 + "keeps going and the model card shows the progress.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Read back from the downloader so the sheet and the model card behind
+    /// it never disagree about how far the copy has got.
+    private var copyProgress: Double {
+        guard let model = importingModel,
+              case .downloading(let progress, _, _) = ModelDownloader.shared.state(for: model)
+        else { return 0 }
+        return progress
     }
 
     // MARK: - Step 2: analysis
@@ -162,6 +268,16 @@ struct ImportModelSheet: View {
                         }
                     }
                 }
+
+                // Checked before any bytes move: mlx-swift builds a model by
+                // looking up config.json's model_type, and an architecture it
+                // has no implementation for otherwise only fails after the
+                // whole repo is already on disk.
+                if format.layout == .huggingFaceMLX, let message = mlxVerdict?.message {
+                    Label(message, systemImage: "xmark.octagon.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
 
             Section("Fit on this \(device.marketingName)") {
@@ -200,9 +316,15 @@ struct ImportModelSheet: View {
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isStartingDownload || estimate.ramVerdict == .wontFit || !estimate.diskFits)
+                .disabled(isStartingDownload || estimate.ramVerdict == .wontFit
+                          || !estimate.diskFits || blocksDownload(format))
 
-                if estimate.ramVerdict == .wontFit {
+                if blocksDownload(format) {
+                    Text("The MLX engine in this build cannot run this architecture. "
+                         + "Nothing is downloaded.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else if estimate.ramVerdict == .wontFit {
                     Text("This model needs more RAM than the device can give it.")
                         .font(.caption)
                         .foregroundStyle(.red)
@@ -230,6 +352,7 @@ struct ImportModelSheet: View {
                     selectedFormat = nil
                     selectedQuant = nil
                     spaces = []
+                    mlxVerdict = nil
                 }
             }
         }
@@ -252,6 +375,7 @@ struct ImportModelSheet: View {
 
     private func check() async {
         errorMessage = nil
+        mlxVerdict = nil
         guard let repo = HuggingFaceAPI.parseRepoID(from: link) else {
             errorMessage = HuggingFaceError.invalidLink(link).localizedDescription
             return
@@ -262,6 +386,10 @@ struct ImportModelSheet: View {
             let info = try await HuggingFaceAPI.fetchRepoInfo(repo: repo)
             guard !info.isPrivate else { throw HuggingFaceError.restricted(repo) }
             let analysis = try ImportAnalyzer.analyze(info)
+            // Resolved while the sheet is still on the "checking" screen, so
+            // the verdict is already in hand when the Download button first
+            // appears and cannot be beaten to it by a fast tap.
+            mlxVerdict = await ImportAnalyzer.mlxArchitectureVerdict(for: analysis)
             selectedFormat = analysis.detected
             selectedQuant = isGGUF(analysis.detected) ? analysis.defaultQuant : nil
             step = .analyzed(analysis)
@@ -299,6 +427,92 @@ struct ImportModelSheet: View {
         dismiss()
     }
 
+    // MARK: - Local file import
+
+    /// Works out what the picked file is and, unless it would overwrite an
+    /// existing import, starts copying it straight away.
+    private func prepareLocalImport(_ url: URL) async {
+        errorMessage = nil
+
+        // Files handed over by the picker live outside the app sandbox; the
+        // scope has to be open for every read of them, inspection included.
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+
+        let candidate: LocalGGUFCandidate
+        do {
+            candidate = try await Task.detached(priority: .userInitiated) {
+                try LocalGGUFFile.inspect(fileURL: url)
+            }.value
+        } catch {
+            errorMessage = describe(error)
+            return
+        }
+
+        if InstalledModelsStore.shared.knownModel(id: candidate.modelID) != nil {
+            pendingReplace = PendingLocalImport(candidate: candidate, url: url)
+            showReplacePrompt = true
+            return
+        }
+
+        await runLocalImport(candidate: candidate, sourceURL: url)
+    }
+
+    /// Copies the file in and registers it. The security scope is reopened
+    /// here because the duplicate confirmation returns from
+    /// `prepareLocalImport` before the user answers.
+    private func runLocalImport(candidate: LocalGGUFCandidate, sourceURL: URL) async {
+        errorMessage = nil
+        let accessing = sourceURL.startAccessingSecurityScopedResource()
+        defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
+
+        // Judged by the same estimator the Hugging Face path uses, so an
+        // imported GGUF and a downloaded one report the same numbers. Free
+        // space is read fresh rather than taken from the device scan.
+        let estimate = ImportAnalyzer.estimate(
+            layout: .singleGGUF,
+            weightBytes: candidate.fileSizeBytes,
+            downloadBytes: candidate.fileSizeBytes,
+            device: device,
+            freeDiskBytes: LocalGGUFFile.freeDiskBytes()
+        )
+        guard estimate.diskFits else {
+            errorMessage = LocalImportError
+                .notEnoughSpace(neededGB: estimate.diskGB, freeGB: estimate.freeDiskGB)
+                .localizedDescription
+            return
+        }
+        // Mirrors the Hugging Face path's Download-button gate: a GGUF that
+        // fits on disk but not in RAM would import fine and then fail every
+        // load preflight, leaving the user with a model that can never run.
+        guard estimate.ramVerdict != .wontFit else {
+            errorMessage = "This model needs more RAM than this device can give it."
+            return
+        }
+
+        let model = LocalGGUFModelBuilder.makeModel(candidate: candidate, estimate: estimate)
+        importingModel = model
+        step = .copying(candidate.filename)
+
+        do {
+            try await ModelDownloader.shared.installLocalFile(
+                model,
+                from: sourceURL,
+                filename: candidate.filename,
+                totalBytes: candidate.fileSizeBytes
+            )
+            dismiss()
+        } catch is CancellationError {
+            // Cancelled from the model card behind the sheet; nothing to say.
+            importingModel = nil
+            step = .input
+        } catch {
+            errorMessage = describe(error)
+            importingModel = nil
+            step = .input
+        }
+    }
+
     // MARK: - Helpers
 
     private func estimate(for result: ImportAnalysis, format: ImportFormat) -> ResourceEstimate {
@@ -316,6 +530,16 @@ struct ImportModelSheet: View {
 
     private func isGGUF(_ format: ImportFormat) -> Bool {
         format.layout == .singleGGUF || format.layout == .ggufWithMmproj
+    }
+
+    /// Only MLX layouts are gated on the architecture check — llama.cpp and
+    /// Core ML decide what they can run on their own terms.
+    private func blocksDownload(_ format: ImportFormat) -> Bool {
+        format.layout == .huggingFaceMLX && (mlxVerdict?.blocksDownload ?? false)
+    }
+
+    private func describe(_ error: any Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 
     private func verdictColor(_ verdict: ResourceVerdict) -> Color {

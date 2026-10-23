@@ -18,6 +18,13 @@ final class ModelRecommender {
     static let shared = ModelRecommender()
     private init() {}
 
+    /// Fraction of the memory budget a model must stay under to be offered as
+    /// *the* recommendation. Everything up to 100% of the budget is still
+    /// listed as compatible and installable — but a model that only barely
+    /// fits loads and then dies as soon as the KV cache grows, which is a
+    /// terrible first experience for someone who just tapped "recommended".
+    private static let recommendationMargin = 0.85
+
     func recommend(for device: DeviceInfo) -> RecommendationResult {
         let ramGB = Double(device.totalRAM) / 1_073_741_824
         let diskGB = Double(device.freeDiskSpace) / 1_073_741_824
@@ -35,7 +42,7 @@ final class ModelRecommender {
             return $0.ramRequiredGB > $1.ramRequiredGB
         }
 
-        guard let best = sorted.first else {
+        guard !sorted.isEmpty else {
             return RecommendationResult(
                 recommended: nil,
                 allCompatible: [],
@@ -46,7 +53,19 @@ final class ModelRecommender {
                     + "Free up storage and rescan."
             )
         }
+
+        // Prefer the best model that leaves real headroom. If nothing clears
+        // the margin (small-RAM devices, where every option is a squeeze),
+        // fall back to the best fitting one and say so — recommending
+        // nothing at all is worse than recommending a tight fit.
+        let comfortable = sorted.first {
+            $0.ramRequiredGB <= device.budgetGB(for: $0.backend) * Self.recommendationMargin
+        }
+        let best = comfortable ?? sorted[0]
         let reason = makeReason(model: best, ramGB: ramGB, aiAvailable: aiAvailable)
+            + (comfortable == nil
+               ? " Memory on this device is tight — expect shorter conversations before it has to reload."
+               : "")
 
         return RecommendationResult(
             recommended: best,
@@ -66,6 +85,16 @@ final class ModelRecommender {
         var incompatible: [AIModel] = []
 
         for model in models {
+            // A backend that is not linked into this binary can never run,
+            // however much RAM the device has. Shipping a recommendation the
+            // user cannot load ("Backend not available in this build") is the
+            // worst possible first impression, so this check comes first.
+            // Note this is a *binary-level* check — Apple Intelligence being
+            // switched off by the user is handled separately below.
+            if !BackendAvailability.isLinked(model.backend) {
+                incompatible.append(model)
+                continue
+            }
             if model.requiresAppleIntelligence && !aiAvailable {
                 incompatible.append(model)
                 continue

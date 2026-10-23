@@ -40,8 +40,13 @@ actor LlamaVisionContext {
     private var lctx: OpaquePointer?
     private var mctx: OpaquePointer?
     private var sampler: UnsafeMutablePointer<llama_sampler>?
-    /// KV-cache cursor. Persisted across turns; reset via `reset()`.
+    /// KV-cache cursor. Rebuilt from scratch on every `generate` call.
     private var nPast: llama_pos = 0
+
+    /// Context window requested from llama.cpp. Vision tokens are heavy
+    /// (Gemma 3 maps one image to 256 tokens), so the callers budget the
+    /// conversation against this number before it reaches the C API.
+    static let contextTokens: UInt32 = 8192
 
     // MARK: - Lifecycle
 
@@ -51,7 +56,7 @@ actor LlamaVisionContext {
     ///   - modelPath: absolute path to the main `.gguf`.
     ///   - mmprojPath: absolute path to the companion `mmproj-*.gguf`.
     static func create(modelPath: String, mmprojPath: String) async throws -> LlamaVisionContext {
-        llama_backend_init()
+        _ = LlamaRuntime.bootstrap
 
         // --- Text model ------------------------------------------------------
         var modelParams = llama_model_default_params()
@@ -75,7 +80,7 @@ actor LlamaVisionContext {
         // headroom to fit a few turns of multimodal chat without thrashing.
         // 8192 is the practical sweet spot on iPhone (≈500 MB Metal compute
         // buffer). For audio-heavy workloads bump to 16384 if RAM allows.
-        ctxParams.n_ctx = 8192
+        ctxParams.n_ctx = contextTokens
         // n_batch must be ≥ the per-image token count (256 for Gemma 3),
         // otherwise mtmd_helper_eval_chunks splits image batches and can
         // hit "no KV slot" (rc=1) corner cases. 512 is the upstream default.
@@ -125,11 +130,32 @@ actor LlamaVisionContext {
     private var generating = false
     private var cleanupPending = false
 
+    /// The chat template stored in the GGUF, if it has one.
+    func embeddedChatTemplate() -> String? {
+        guard let model else { return nil }
+        return LlamaChatTemplate.embedded(in: model)
+    }
+
     /// Wipes the KV cache and resets `nPast`. The model weights stay loaded.
     func reset() {
+        forgetSequence()
+    }
+
+    /// Drops sequence 0 from the KV cache and rewinds `nPast`.
+    ///
+    /// Two details matter here. `llama_synchronize` first: the previous
+    /// turn's Metal command buffers may still be in flight, and mutating
+    /// cache state under them cost us a GPU fault ("victim of GPU
+    /// error/recovery") that took out the next image encode. And
+    /// `llama_memory_seq_rm` over the whole sequence rather than
+    /// `llama_memory_clear(mem, true)`: removing a whole sequence never
+    /// fails and only touches metadata, where clearing with `data: true`
+    /// zeroes about a gigabyte of KV buffers nothing will ever read.
+    private func forgetSequence() {
         guard let lctx else { return }
+        llama_synchronize(lctx)
         if let mem = llama_get_memory(lctx) {
-            llama_memory_clear(mem, true)
+            llama_memory_seq_rm(mem, 0, -1, -1)
         }
         nPast = 0
     }
@@ -187,6 +213,17 @@ actor LlamaVisionContext {
         }
 
         let vocab = llama_model_get_vocab(model)
+
+        // --- Rebuild the KV cache -------------------------------------------
+        // The caller re-sends the whole conversation on every turn, so the
+        // cache is rebuilt from it rather than appended to. Appending - what
+        // this actor used to do - decoded the entire transcript again on top
+        // of the previous turns, so `nPast` grew by a full transcript per
+        // message and a vision chat died with "context window full" after a
+        // couple of turns. Media from earlier turns is replayed too (see
+        // `LlamaCppVisionEngine.prepareMultimodal`), so nothing is lost by
+        // starting over.
+        forgetSequence()
 
         // --- Rebuild sampler chain ------------------------------------------
         // Free any chain left over from a previous turn — the actor owns it,
@@ -246,9 +283,10 @@ actor LlamaVisionContext {
         let rc: Int32 = prompt.withCString { cPrompt -> Int32 in
             var text = mtmd_input_text(
                 text: cPrompt,
-                // add_special=true only on the very first decode so BOS is
-                // prepended exactly once per conversation.
-                add_special: nPast == 0,
+                // The prompt is the whole conversation and the cache was
+                // just cleared, so this decode always starts a sequence and
+                // always wants a BOS token.
+                add_special: true,
                 parse_special: true
             )
             return bitmaps.withUnsafeMutableBufferPointer { buf -> Int32 in
@@ -305,16 +343,16 @@ actor LlamaVisionContext {
             //
             // Wipe the KV cache so the next message starts clean. The user
             // loses prior context (acceptable: the alternative is a dead chat).
-            if let mem = llama_get_memory(lctx) {
-                llama_memory_clear(mem, true)
-            }
-            nPast = 0
+            forgetSequence()
 
             // Translate libllama codes into something readable.
+            let promptTokens = mtmd_helper_get_n_tokens(chunks)
             let reason: String
             switch evalRC {
             case 1:
-                reason = "context window full (try Clear chat, or send fewer / smaller media)"
+                reason = "the conversation no longer fits the \(Self.contextTokens)-token "
+                    + "context window (\(promptTokens) tokens with media). "
+                    + "Clear chat, or send fewer / smaller images."
             case 2:
                 reason = "compute error (out of GPU memory?)"
             default:

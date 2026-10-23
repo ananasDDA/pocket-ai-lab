@@ -19,10 +19,26 @@ nonisolated struct CatalogDocument: Codable, Sendable {
     let schemaVersion: Int
     let models: [AIModel]
 
-    /// Bumping this in the app makes it ignore older remote documents, and
-    /// bumping it in the remote file makes older app builds ignore it. Either
-    /// way the bundled copy keeps working.
-    static let supportedSchemaVersion = 1
+    /// The ONLY schema version this build accepts, in both directions: a
+    /// document is rejected when its `schemaVersion` is not exactly this
+    /// number, whether it is older or newer. That is what makes the version
+    /// a release gate rather than a hint.
+    ///
+    /// Bump it here and in `Resources/catalog.json` in the same commit
+    /// whenever the bundled catalog gains or changes entries that the copy
+    /// published in the public repo does not have yet. Until the new file is
+    /// published (RELEASE_CHECKLIST step 7), every install of this build
+    /// rejects the stale remote document and the stale cache written from it,
+    /// so the bundled catalog wins. Older installs keep rejecting the new
+    /// file for the same reason, and go on using the catalog they shipped
+    /// with — which is the intended outcome, not a regression.
+    static let supportedSchemaVersion = 3
+}
+
+/// Reads nothing but the version, so a document this build cannot decode can
+/// still be recognised as "a catalog of the wrong vintage".
+private struct CatalogSchemaProbe: Decodable {
+    let schemaVersion: Int
 }
 
 // MARK: - On-disk locations
@@ -46,6 +62,11 @@ enum CatalogFile {
         return dir.appendingPathComponent("catalog-cache.json")
     }
 
+    /// Rejects any document whose `schemaVersion` differs from
+    /// `CatalogDocument.supportedSchemaVersion`, in either direction, and any
+    /// document with no models. Returning `nil` here is what keeps a stale
+    /// remote file (and the cache written from an earlier one) from
+    /// overwriting the bundled catalog on launch.
     static func decode(_ data: Data) -> [AIModel]? {
         guard let document = try? JSONDecoder().decode(CatalogDocument.self, from: data),
               document.schemaVersion == CatalogDocument.supportedSchemaVersion,
@@ -54,9 +75,29 @@ enum CatalogFile {
         return document.models
     }
 
+    /// Deletes a cached catalog this build cannot use — which on the first
+    /// launch after `supportedSchemaVersion` changed is every cache written
+    /// by the previous build. Without it the file would sit in Application
+    /// Support being re-read and re-rejected on every launch, and would come
+    /// back to life if the app ever went back to the old version.
+    ///
+    /// Nothing is refetched here: `refresh()` only writes a cache for a
+    /// document that decoded, so a public repo still serving the old schema
+    /// simply leaves no cache at all.
+    @discardableResult
+    static func purgeIncompatibleCache() -> Bool {
+        guard let cacheURL, let data = try? Data(contentsOf: cacheURL) else { return false }
+        let cachedVersion = (try? JSONDecoder().decode(CatalogSchemaProbe.self, from: data))?
+            .schemaVersion
+        guard cachedVersion != CatalogDocument.supportedSchemaVersion else { return false }
+        try? FileManager.default.removeItem(at: cacheURL)
+        return true
+    }
+
     /// Cached remote copy, else the bundled resource. `nil` means the caller
     /// should fall back to the compiled-in catalog.
     static func loadLocal() -> [AIModel]? {
+        purgeIncompatibleCache()
         if let cacheURL, let data = try? Data(contentsOf: cacheURL), let models = decode(data) {
             return models
         }
@@ -135,6 +176,9 @@ final class RemoteCatalog {
     /// Best-effort update. Never throws and never surfaces an error: a stale
     /// catalog is strictly better than an empty one.
     func refresh() async {
+        // Stands down while a benchmark is being measured - see
+        // `BenchmarkRunGate`.
+        guard !BenchmarkRunGate.shared.isRunning else { return }
         guard !isRefreshing, let url = CatalogFile.remoteURL else { return }
         isRefreshing = true
         defer { isRefreshing = false }

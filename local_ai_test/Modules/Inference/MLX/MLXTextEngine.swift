@@ -91,6 +91,13 @@ final class MLXTextEngine: InferenceEngine, @unchecked Sendable {
                     // state is captured across concurrency domains.
                     let tokensGenerated: Int = try await container.perform { context in
                         let input = try await context.processor.prepare(input: userInput)
+                        // `parameters.topK` and `parameters.seed` are dropped:
+                        // MLX's `GenerateParameters` has no topK field, and its
+                        // samplers build a private `MLXRandom.RandomState` from
+                        // the clock rather than reading the global PRNG, so
+                        // `MLXRandom.seed` would not reach them. Harmless for
+                        // the benchmark, which runs at temperature 0 - MLX then
+                        // samples with argmax and neither value applies.
                         let generateParams = GenerateParameters(
                             maxTokens: parameters.maxTokens,
                             temperature: parameters.temperature,

@@ -92,7 +92,7 @@ Swift Package dependencies (mlx-swift-examples, swift-transformers) resolve auto
 
 ## Privacy
 
-There is no server. The app talks to exactly two hosts: `huggingface.co` (model downloads and metadata) and `raw.githubusercontent.com` (catalog updates). Conversations never leave the device.
+Conversations never leave the device.
 
 ## Acknowledgements
 

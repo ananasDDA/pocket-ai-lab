@@ -48,6 +48,15 @@ protocol InferenceEngine: AnyObject, Sendable {
         turns: [ChatTurn],
         parameters: GenerationParameters
     ) -> AsyncThrowingStream<ChatOutput, Error>
+
+    /// The chat template stored inside the model file, when the format
+    /// carries one. Engines whose weights hold no template return nil and
+    /// the app formats by family instead.
+    func embeddedChatTemplate() async -> String?
+}
+
+extension InferenceEngine {
+    func embeddedChatTemplate() async -> String? { nil }
 }
 
 extension InferenceEngine {

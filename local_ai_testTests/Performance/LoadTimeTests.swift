@@ -21,7 +21,7 @@ struct LoadTimeTests {
     }
 
     @Test @MainActor func measureCoreMLWithCompile() async throws {
-        try await measureLoad(modelId: "apple/mistral-coreml", tag: "CoreML/Mistral")
+        try await measureLoad(modelId: "anziank/grio-qwen2.5-1.5b-instruct-coreml-stateful-int8", tag: "CoreML/Qwen2.5-1.5B")
     }
 
     @MainActor

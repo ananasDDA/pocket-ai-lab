@@ -11,6 +11,8 @@ final class SetupFilterTests: XCTestCase {
     @MainActor
     func testFiltersAreTappable() throws {
         let app = XCUIApplication()
+        // Keeps the launched app from sending measurement records.
+        app.launchEnvironment["PAL_ANALYTICS_DISABLED"] = "1"
         app.launch()
 
         if app.tabBars.buttons["Setup"].exists {
