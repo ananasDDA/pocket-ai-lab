@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "version": "1.1.0",
   "build": 3,
-  "published": false,
-  "releasedAt": "2026-10-22",
+  "published": true,
+  "releasedAt": "2026-10-23",
   "appStoreURL": "https://apps.apple.com/app/id6802253142",
   "notes": [
     "New models: Gemma 4 E2B, Qwen 3.5 and LFM2, all GGUF",
