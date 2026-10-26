@@ -419,7 +419,12 @@
       "preferredGGUFFilename": "LFM2-2.6B-Q4_K_M.gguf",
       "source": "curated",
       "licenseName": "LFM Open License v1.0",
-      "licenseURL": "https://huggingface.co/LiquidAI/LFM2-2.6B-GGUF/blob/main/LICENSE"
+      "licenseURL": "https://huggingface.co/LiquidAI/LFM2-2.6B-GGUF/blob/main/LICENSE",
+      "sampling": {
+        "temperature": 0.3,
+        "minP": 0.15,
+        "repetitionPenalty": 1.05
+      }
     },
     {
       "id": "ggerganov/whisper.cpp/tiny.en",
