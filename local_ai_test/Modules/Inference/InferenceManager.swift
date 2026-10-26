@@ -217,13 +217,17 @@ final class InferenceManager {
             probe.finished()
         } catch {
             probe.failed(error)
+            // llama.cpp failures carry the cause read from its log (memory,
+            // architecture, missing split parts, damaged file); everything
+            // else keeps the generic headline.
+            let loadError = error as? LlamaLoadError
             let failure = EngineFailure(
                 phase: .load,
                 modelId: model.id,
                 modelName: model.name,
                 backend: model.backend.displayName,
-                summary: "Failed to load model",
-                detail: error.localizedDescription,
+                summary: loadError?.cause.summary ?? "Failed to load model",
+                detail: loadError?.detail ?? error.localizedDescription,
                 underlyingType: String(describing: type(of: error))
             )
             lastError = failure

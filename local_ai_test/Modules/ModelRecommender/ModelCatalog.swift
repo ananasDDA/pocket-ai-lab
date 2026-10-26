@@ -61,20 +61,6 @@ enum ModelCatalog {
         ),
 
         AIModel(
-            id: "mlx-community/Phi-3.5-mini-instruct-4bit",
-            name: "Phi-3.5 Mini",
-            family: "Phi",
-            parameterSize: "3.8B",
-            quantization: "4bit",
-            backend: .mlx,
-            capabilities: .textOnly,
-            ramRequiredGB: 2.4, diskSizeGB: 2.3,
-            huggingFaceRepo: "mlx-community/Phi-3.5-mini-instruct-4bit",
-            contextLength: 131072,
-            quality: .good
-        ),
-
-        AIModel(
             id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
             name: "Llama 3.2 3B",
             family: "Llama",
@@ -145,7 +131,7 @@ enum ModelCatalog {
             ramRequiredGB: 8.2, diskSizeGB: 8.5,
             huggingFaceRepo: "mlx-community/Qwen2.5-14B-Instruct-4bit",
             contextLength: 32768,
-            quality: .excellent
+            quality: .great
         ),
 
         // MARK: - MLX Vision (VLM)
@@ -177,7 +163,7 @@ enum ModelCatalog {
             ramRequiredGB: 8.4, diskSizeGB: 7.5,
             huggingFaceRepo: "mlx-community/gemma-3-12b-it-4bit",
             contextLength: 131072,
-            quality: .excellent,
+            quality: .great,
             licenseName: "Gemma Terms of Use",
             licenseURL: "https://ai.google.dev/gemma/terms"
         ),
@@ -216,22 +202,6 @@ enum ModelCatalog {
             preferredGGUFFilename: "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
             licenseName: "Llama 3.2 Community License",
             licenseURL: "https://www.llama.com/llama3_2/license/"
-        ),
-
-        AIModel(
-            id: "bartowski/Phi-3.5-mini-instruct-GGUF",
-            name: "Phi-3.5 Mini (GGUF)",
-            family: "Phi",
-            parameterSize: "3.8B",
-            quantization: "Q4_K_M",
-            backend: .llamaCpp,
-            capabilities: .textOnly,
-            fileLayout: .singleGGUF,
-            ramRequiredGB: 2.7, diskSizeGB: 2.4,
-            huggingFaceRepo: "bartowski/Phi-3.5-mini-instruct-GGUF",
-            contextLength: 131072,
-            quality: .good,
-            preferredGGUFFilename: "Phi-3.5-mini-instruct-Q4_K_M.gguf"
         ),
 
         AIModel(
@@ -278,6 +248,16 @@ enum ModelCatalog {
         // Gemma 4 E4B is deliberately absent: its weights alone (about 6 GB
         // with the projector) are over the GGUF budget of an 8 GB iPhone
         // (~5.1 GB).
+        //
+        // `quality` is what steers the recommender (it sorts by quality, then
+        // by RAM, and takes the first model within 85% of the device budget),
+        // so it follows the 2026-10 daily-use evaluation on an iPhone Air
+        // rather than parameter count. Gemma 4 E2B (best all-rounder) and
+        // LFM2 2.6B (best text model, instant replies) are the only
+        // `.excellent` entries: Gemma 4 E2B wins wherever it clears the
+        // margin (12 GB and up), LFM2 2.6B everywhere else down to 6 GB.
+        // LFM2 1.2B is `.great` so that 4 GB phones get a chat model rather
+        // than a Whisper entry, which is also `.great` and always fits.
 
         AIModel(
             id: "unsloth/gemma-4-E2B-it-GGUF",
@@ -291,7 +271,7 @@ enum ModelCatalog {
             ramRequiredGB: 5.0, diskSizeGB: 4.1,
             huggingFaceRepo: "unsloth/gemma-4-E2B-it-GGUF",
             contextLength: 8192,
-            quality: .great,
+            quality: .excellent,
             preferredGGUFFilename: "gemma-4-E2B-it-Q4_K_M.gguf",
             mmprojFilename: "mmproj-F16.gguf"
         ),
@@ -359,7 +339,7 @@ enum ModelCatalog {
             ramRequiredGB: 1.4, diskSizeGB: 0.8,
             huggingFaceRepo: "LiquidAI/LFM2-1.2B-GGUF",
             contextLength: 4096,
-            quality: .good,
+            quality: .great,
             // The plain Q4_K_M, not the "-hip-optimized" sibling built for
             // AMD GPUs.
             preferredGGUFFilename: "LFM2-1.2B-Q4_K_M.gguf",
@@ -379,7 +359,7 @@ enum ModelCatalog {
             ramRequiredGB: 2.2, diskSizeGB: 1.6,
             huggingFaceRepo: "LiquidAI/LFM2-2.6B-GGUF",
             contextLength: 4096,
-            quality: .good,
+            quality: .excellent,
             preferredGGUFFilename: "LFM2-2.6B-Q4_K_M.gguf",
             licenseName: "LFM Open License v1.0",
             licenseURL: "https://huggingface.co/LiquidAI/LFM2-2.6B-GGUF/blob/main/LICENSE"
@@ -417,6 +397,49 @@ enum ModelCatalog {
             contextLength: 0,
             quality: .great,
             preferredGGUFFilename: "ggml-base.bin"
+        ),
+
+        // MARK: - Kept for existing installs (always last)
+        //
+        // Phi-3.5 Mini (MLX and GGUF) and the Core ML Qwen2.5 1.5B lost the
+        // 2026-10 evaluation, but 1.1 shows a delete button only on catalog
+        // and imported cards: dropping them from the catalog would leave
+        // every copy already downloaded stranded on disk. They stay at the
+        // lowest quality tier and are flagged `deprecated`, which 1.2 reads:
+        // never recommended, sorted after every current model, labelled
+        // "Older model". 1.1 ignores the flag and still keeps them out of the
+        // recommendation through the quality tier.
+
+        AIModel(
+            id: "mlx-community/Phi-3.5-mini-instruct-4bit",
+            name: "Phi-3.5 Mini",
+            family: "Phi",
+            parameterSize: "3.8B",
+            quantization: "4bit",
+            backend: .mlx,
+            capabilities: .textOnly,
+            ramRequiredGB: 2.4, diskSizeGB: 2.3,
+            huggingFaceRepo: "mlx-community/Phi-3.5-mini-instruct-4bit",
+            contextLength: 131072,
+            quality: .good,
+            deprecated: true
+        ),
+
+        AIModel(
+            id: "bartowski/Phi-3.5-mini-instruct-GGUF",
+            name: "Phi-3.5 Mini (GGUF)",
+            family: "Phi",
+            parameterSize: "3.8B",
+            quantization: "Q4_K_M",
+            backend: .llamaCpp,
+            capabilities: .textOnly,
+            fileLayout: .singleGGUF,
+            ramRequiredGB: 2.7, diskSizeGB: 2.4,
+            huggingFaceRepo: "bartowski/Phi-3.5-mini-instruct-GGUF",
+            contextLength: 131072,
+            quality: .good,
+            preferredGGUFFilename: "Phi-3.5-mini-instruct-Q4_K_M.gguf",
+            deprecated: true
         ),
 
         // MARK: - Core ML (HF apple/ + coreml-community/)
@@ -468,7 +491,8 @@ enum ModelCatalog {
             // Must be pinned: the repo holds both containers, and the
             // smallest-wins fallback would pick the `.mlpackage` and put the
             // compile back.
-            preferredPackage: "Qwen2.5-1.5B-Instruct-stateful-int8.mlmodelc"
+            preferredPackage: "Qwen2.5-1.5B-Instruct-stateful-int8.mlmodelc",
+            deprecated: true
         ),
     ]
 

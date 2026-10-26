@@ -111,6 +111,12 @@ struct BenchmarkHarnessConfig {
             .flatMap(TimeInterval.init)
             .flatMap(BenchmarkOptions.sanitizedBudget)
 
+        // The conditions gate of an unattended run: cool to nominal plus a
+        // settle period, power gate, download stall detection. Tuned with
+        // BENCH_COOLDOWN_TARGET / _MAX_SEC / _SETTLE_SEC,
+        // BENCH_STOP_ON_BAD_POWER and BENCH_DOWNLOAD_STALL_SEC.
+        let conditions = RunConditionsPolicy.fromEnvironment(environment, prefix: "BENCH_")
+
         return BenchmarkHarnessConfig(
             enabled: flag("BENCH_ENABLED"),
             logJSON: flag("BENCH_LOG_JSON"),
@@ -122,7 +128,9 @@ struct BenchmarkHarnessConfig {
                 runStandardProtocol: !flag("BENCH_NO_PROTOCOL"),
                 thermalGating: thermalGating,
                 cooldownBetweenModels: thermalGating,
-                qualityBudget: qualityBudget
+                qualityBudget: qualityBudget,
+                conditions: conditions,
+                interleaveByWeight: flag("BENCH_INTERLEAVE")
             )
         )
     }

@@ -71,10 +71,33 @@ final class LlamaCppTextEngine: InferenceEngine, @unchecked Sendable {
                     return
                 }
                 do {
-                    let rendered = await ChatTemplateResolver.render(
+                    let modelID = self.model.id
+                    let embedded = await ctx.embeddedChatTemplate()
+                    // Fit the conversation into the window by whole turns
+                    // before tokenizing (see `HistoryTrim`): the system turn
+                    // and the question stay, older exchanges go in batches
+                    // so the KV prefix cache keeps hitting, and only a turn
+                    // that is too long on its own is cut inside. Measured
+                    // with the model's own tokenizer on the exact prompt.
+                    let room = ContextBudget.promptRoom(
+                        maxTokens: parameters.maxTokens,
+                        contextSize: Int(LlamaContext.contextSize)
+                    )
+                    let fitted = await HistoryTrim.fit(
                         turns: turns,
-                        modelID: self.model.id,
-                        embedded: await ctx.embeddedChatTemplate()
+                        room: room,
+                        count: { await ctx.tokenCount(of: $0, asPrompt: false) },
+                        measure: { @MainActor kept in
+                            let text = ChatTemplateResolver.render(
+                                turns: kept, modelID: modelID, embedded: embedded
+                            ).text
+                            return await ctx.tokenCount(of: text, asPrompt: true)
+                        }
+                    )
+                    let rendered = ChatTemplateResolver.render(
+                        turns: fitted.kept,
+                        modelID: modelID,
+                        embedded: embedded
                     )
                     continuation.yield(.diagnostic(.promptRendered(rendered)))
                     let prompt = rendered.text
@@ -86,10 +109,7 @@ final class LlamaCppTextEngine: InferenceEngine, @unchecked Sendable {
                     let tokensGenerated = try await ctx.completion(
                         prompt: prompt,
                         maxTokens: parameters.maxTokens,
-                        temperature: parameters.temperature,
-                        topP: parameters.topP,
-                        topK: parameters.topK,
-                        repetitionPenalty: parameters.repetitionPenalty,
+                        sampling: LlamaSamplerPlan.steps(for: parameters),
                         seed: parameters.seed
                     ) { piece, index in
                         if index == 0 {
@@ -105,6 +125,16 @@ final class LlamaCppTextEngine: InferenceEngine, @unchecked Sendable {
                         tokenCount: prefill.tokens,
                         timeMs: prefill.ms
                     )))
+                    continuation.yield(.diagnostic(.promptCache(PromptCacheReport(
+                        promptTokens: prefill.tokens,
+                        reusedTokens: prefill.reused,
+                        evaluatedTokens: prefill.tokens - prefill.reused,
+                        droppedFrontTokens: prefill.droppedFront,
+                        droppedTurns: fitted.droppedTurns,
+                        truncatedTokens: fitted.truncatedTokens,
+                        firstUserTurnIntact: fitted.firstUserTurnIntact,
+                        rewind: prefill.rewind
+                    ))))
                     continuation.yield(.diagnostic(.finished(
                         tokensGenerated: tokensGenerated,
                         tokensPerSecond: elapsed > 0 ? Double(tokensGenerated) / elapsed : 0
@@ -153,15 +183,62 @@ enum LlamaRuntime {
     /// again. Both llama.cpp contexts touch it before they load anything.
     static let bootstrap: Void = {
         setenv("GGML_METAL_NO_RESIDENCY", "1", 1)
+        // Before the backend starts logging: a failed load reports its
+        // reason only here, and `LlamaLoadFailure` reads it back.
+        llama_log_set({ level, text, _ in
+            guard let text else { return }
+            // Same output the default logger gives, so console logs stay.
+            fputs(text, stderr)
+            LlamaLogCapture.shared.append(level: Int(level.rawValue), text: String(cString: text))
+        }, nil)
         llama_backend_init()
     }()
+
+    /// Builds the error for a load that returned NULL, from what llama.cpp
+    /// logged since `mark`.
+    static func loadError(since mark: Int, stage: LlamaLoadFailure.Stage) -> LlamaLoadError {
+        let log = LlamaLogCapture.shared.lines(since: mark)
+        return LlamaLoadError(
+            cause: LlamaLoadFailure.classify(log: log, stage: stage),
+            logExcerpt: LlamaLoadFailure.excerpt(from: log)
+        )
+    }
+}
+
+/// Turns a `LlamaSamplerPlan` into llama.cpp samplers (b8882 signatures).
+/// Shared with `LlamaVisionContext`.
+nonisolated enum LlamaSamplerChainBuilder {
+    static func add(
+        _ steps: [LlamaSamplerStep],
+        to chain: UnsafeMutablePointer<llama_sampler>?,
+        seed: UInt32
+    ) {
+        for step in steps {
+            let sampler: UnsafeMutablePointer<llama_sampler>?
+            switch step {
+            case let .penalties(lastN, rep, freq, presence):
+                sampler = llama_sampler_init_penalties(lastN, rep, freq, presence)
+            case let .topK(k):
+                sampler = llama_sampler_init_top_k(k)
+            case let .topP(p, minKeep):
+                sampler = llama_sampler_init_top_p(p, minKeep)
+            case let .minP(p, minKeep):
+                sampler = llama_sampler_init_min_p(p, minKeep)
+            case let .temperature(t):
+                sampler = llama_sampler_init_temp(t)
+            case .dist:
+                sampler = llama_sampler_init_dist(seed)
+            }
+            llama_sampler_chain_add(chain, sampler)
+        }
+    }
 }
 
 /// Actor isolating all direct calls into the llama.cpp C API.
 ///
 /// Implemented against the public headers in llama.cpp/llama.h. Implementors
 /// of this file should keep the surface area minimal: loading, batched decode,
-/// sampler chain (top-k, top-p, temperature, repetition penalty, min-p),
+/// sampler chain (`LlamaSamplerPlan`),
 /// token streaming, reset.
 actor LlamaContext {
     private var model: OpaquePointer?
@@ -172,10 +249,13 @@ actor LlamaContext {
     /// prompt can reuse the part of it that has not changed. Always the
     /// same length as `nPast`.
     private var cachedTokens: [llama_token] = []
-    /// Prompt size (after fitting it into the window) and the time spent
-    /// decoding the part the cache did not already hold, for the last
-    /// completion. Read by the engine for its prompt diagnostic.
-    private(set) var lastPrefill: (tokens: Int, ms: Double) = (0, 0)
+    /// Prompt size (after fitting it into the window), the time spent
+    /// decoding the part the cache did not already hold, how much of it the
+    /// cache did hold and how many tokens were cut from the front to fit,
+    /// for the last completion. Read by the engine for its diagnostics.
+    private(set) var lastPrefill: (
+        tokens: Int, ms: Double, reused: Int, droppedFront: Int, rewind: PromptCacheReport.Rewind
+    ) = (0, 0, 0, 0, .empty)
 
     /// Context window requested from llama.cpp. Prompts longer than what is
     /// left of it are trimmed from the front (oldest history first).
@@ -194,8 +274,9 @@ actor LlamaContext {
         modelParams.n_gpu_layers = 999
         #endif
 
+        let logMark = LlamaLogCapture.shared.mark()
         guard let model = llama_model_load_from_file(modelPath, modelParams) else {
-            throw InferenceError.generationFailed("llama.cpp: failed to load model at \(modelPath)")
+            throw LlamaRuntime.loadError(since: logMark, stage: .model)
         }
 
         var ctxParams = llama_context_default_params()
@@ -206,7 +287,7 @@ actor LlamaContext {
 
         guard let ctx = llama_init_from_model(model, ctxParams) else {
             llama_model_free(model)
-            throw InferenceError.generationFailed("llama.cpp: failed to create context")
+            throw LlamaRuntime.loadError(since: logMark, stage: .context)
         }
 
         return LlamaContext(model: model, ctx: ctx)
@@ -241,15 +322,13 @@ actor LlamaContext {
     /// generated. The index lets callers detect the first token without
     /// sharing mutable state across concurrency domains.
     ///
+    /// `sampling` is the chain to build (`LlamaSamplerPlan.steps(for:)`).
     /// `seed` fixes the distribution sampler's RNG; `nil` keeps the previous
     /// behaviour of drawing a fresh random seed per completion.
     func completion(
         prompt: String,
         maxTokens: Int,
-        temperature: Float,
-        topP: Float,
-        topK: Int,
-        repetitionPenalty: Float,
+        sampling: [LlamaSamplerStep],
         seed: UInt64? = nil,
         onPiece: @Sendable (String, Int) -> Void
     ) async throws -> Int {
@@ -262,10 +341,6 @@ actor LlamaContext {
         var sparams = llama_sampler_chain_default_params()
         sparams.no_perf = true
         let chain = llama_sampler_chain_init(sparams)
-        llama_sampler_chain_add(chain, llama_sampler_init_penalties(64, repetitionPenalty, 0.0, 0.0))
-        llama_sampler_chain_add(chain, llama_sampler_init_top_k(Int32(topK)))
-        llama_sampler_chain_add(chain, llama_sampler_init_top_p(topP, 1))
-        llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
         // A caller-supplied seed makes the sampler reproducible (the benchmark
         // relies on it); without one, every completion draws a fresh seed, as
         // before. llama.cpp reserves 0xFFFFFFFF for "pick a random seed", so a
@@ -281,40 +356,20 @@ actor LlamaContext {
         } else {
             samplerSeed = UInt32(truncatingIfNeeded: UInt64.random(in: 0...UInt64(UInt32.max)))
         }
-        llama_sampler_chain_add(chain, llama_sampler_init_dist(samplerSeed))
+        LlamaSamplerChainBuilder.add(sampling, to: chain, seed: samplerSeed)
         sampler = chain
 
         // Tokenize prompt
-        let promptCstr = Array(prompt.utf8CString)
-        let maxTokens32 = Int32(prompt.utf8.count + 64)
-        var tokens = [llama_token](repeating: 0, count: Int(maxTokens32))
-        // `add_special` is off: `PromptFormatter` already writes the
-        // template's own BOS marker for the families that have one (Llama
-        // 3's "<|begin_of_text|>"), and asking llama_tokenize to add it as
-        // well started every prompt with BOS twice - llama.cpp complains
-        // about exactly that in check_double_bos_eos. The families whose
-        // template carries no marker get the token prepended below.
-        let n = llama_tokenize(
-            vocab,
-            promptCstr,
-            Int32(promptCstr.count - 1),
-            &tokens,
-            maxTokens32,
-            false,
-            true
-        )
-        guard n > 0 else { throw InferenceError.generationFailed("llama.cpp: tokenize failed") }
-        tokens = Array(tokens.prefix(Int(n)))
-
-        let bos = llama_vocab_bos(vocab)
-        if llama_vocab_get_add_bos(vocab), tokens.first != bos {
-            tokens.insert(bos, at: 0)
+        guard var tokens = tokenize(prompt, asPrompt: true), !tokens.isEmpty else {
+            throw InferenceError.generationFailed("llama.cpp: tokenize failed")
         }
 
         // Fit the prompt into the context window, keeping room for the
-        // requested completion. Overlong prompts lose their oldest tokens
-        // (the BOS token is kept so the model still sees a proper sequence
-        // start).
+        // requested completion. The engine has already fitted the
+        // conversation by whole turns (`HistoryTrim`), so this is a safety
+        // net for a prompt that still does not fit: it loses its oldest
+        // tokens (the BOS token is kept so the model still sees a proper
+        // sequence start), and the cut is reported as `droppedFrontTokens`.
         //
         // The budget is measured against the whole window, NOT against what
         // is left after `nPast`: every engine in this app is stateless and
@@ -323,13 +378,13 @@ actor LlamaContext {
         // charged the transcript twice per message and ended a chat with
         // "context window full" after a handful of turns.
         let contextSize = Int(Self.contextSize)
-        let reservedForCompletion = min(maxTokens, contextSize / 2)
-        let room = contextSize - reservedForCompletion
+        let room = ContextBudget.promptRoom(maxTokens: maxTokens, contextSize: contextSize)
         guard room >= 16 else {
             throw InferenceError.generationFailed(
                 "llama.cpp: the context window (\(contextSize) tokens) leaves no room for a reply."
             )
         }
+        let renderedCount = tokens.count
         if tokens.count > room {
             let keepFromEnd = room - 1
             tokens = [tokens[0]] + Array(tokens.suffix(keepFromEnd))
@@ -337,7 +392,10 @@ actor LlamaContext {
 
         // Rewind the KV cache to the longest prefix it still shares with
         // this prompt, so only the new tail has to be decoded.
+        let hadCache = !cachedTokens.isEmpty
         try rewindCache(to: tokens)
+        let reused = Int(nPast)
+        let rewind: PromptCacheReport.Rewind = reused > 0 ? .prefix : (hadCache ? .cleared : .empty)
 
         // Decode the prompt in slices no larger than the batch the context
         // was created with. Only the last token of the last slice needs
@@ -373,7 +431,13 @@ actor LlamaContext {
             offset += slice.count
             if Task.isCancelled { throw InferenceError.cancelled }
         }
-        lastPrefill = (tokens.count, Date().timeIntervalSince(prefillStart) * 1000)
+        lastPrefill = (
+            tokens.count,
+            Date().timeIntervalSince(prefillStart) * 1000,
+            reused,
+            renderedCount - tokens.count,
+            rewind
+        )
 
         // Generation loop.
         // Multibyte characters (Cyrillic, CJK, emoji) are often split across
@@ -426,6 +490,41 @@ actor LlamaContext {
             onPiece(String(decoding: pendingUTF8, as: UTF8.self), produced)
         }
         return produced
+    }
+
+    /// Number of tokens `text` decodes to: as a whole prompt (`asPrompt`,
+    /// with the BOS handling `completion` applies) or as a piece of one.
+    /// The engine measures candidate prompts with it while fitting the
+    /// conversation into the window.
+    func tokenCount(of text: String, asPrompt: Bool) -> Int {
+        tokenize(text, asPrompt: asPrompt)?.count ?? (text.utf8.count / 2 + 1)
+    }
+
+    /// Tokenizes `text` with special tokens parsed. `nil` when the model is
+    /// not loaded or tokenization fails.
+    ///
+    /// `add_special` is off: `PromptFormatter` already writes the template's
+    /// own BOS marker for the families that have one (Llama 3's
+    /// "<|begin_of_text|>"), and asking llama_tokenize to add it as well
+    /// started every prompt with BOS twice - llama.cpp complains about
+    /// exactly that in check_double_bos_eos. For a whole prompt, the
+    /// families whose template carries no marker get the token prepended.
+    private func tokenize(_ text: String, asPrompt: Bool) -> [llama_token]? {
+        guard let model else { return nil }
+        let vocab = llama_model_get_vocab(model)
+        let cString = Array(text.utf8CString)
+        let capacity = Int32(text.utf8.count + 64)
+        var tokens = [llama_token](repeating: 0, count: Int(capacity))
+        let n = llama_tokenize(vocab, cString, Int32(cString.count - 1), &tokens, capacity, false, true)
+        guard n >= 0 else { return nil }
+        tokens = Array(tokens.prefix(Int(n)))
+        if asPrompt {
+            let bos = llama_vocab_bos(vocab)
+            if llama_vocab_get_add_bos(vocab), tokens.first != bos {
+                tokens.insert(bos, at: 0)
+            }
+        }
+        return tokens
     }
 
     /// Drops every cached token from the first one that differs from

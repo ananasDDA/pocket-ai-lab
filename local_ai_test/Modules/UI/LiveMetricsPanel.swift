@@ -120,6 +120,14 @@ struct LiveMetricsPanel: View {
                 thermalScale
                 Spacer()
             }
+
+            if let thermal = metrics.history.last?.thermal,
+               thermal == .serious || thermal == .critical {
+                Text(ThermalAdvice.explanation)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

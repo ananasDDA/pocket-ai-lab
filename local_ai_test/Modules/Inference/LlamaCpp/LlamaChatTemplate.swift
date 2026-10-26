@@ -18,7 +18,7 @@ import Foundation
 
 import llama
 
-enum LlamaChatTemplate {
+nonisolated enum LlamaChatTemplate {
 
     /// The template stored in the model file, if it has one.
     static func embedded(in model: OpaquePointer) -> String? {
@@ -89,7 +89,7 @@ enum LlamaChatTemplate {
 
 #else
 
-enum LlamaChatTemplate {
+nonisolated enum LlamaChatTemplate {
     static func render(turns: [ChatTurn], template: String) -> String? { nil }
     static func isSupported(_ template: String) -> Bool { false }
 }

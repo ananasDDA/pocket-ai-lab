@@ -172,6 +172,53 @@ struct ThrottleVerdictTests {
         )
         #expect(metrics.thermallyConstrained)
         #expect(metrics.throttleDropPercent == nil)
+        #expect(metrics.measurementIssues == nil)
         #expect(metrics.throughputIsComparable == false)
+    }
+
+    // MARK: - Measurement conditions
+
+    @Test func aSteadyRunTakenInLowPowerModeIsInvalidNotSlow() throws {
+        // The night-sweep shape: three repetitions that agree to 0.02 tok/s,
+        // ten times slower than the model really is.
+        let metrics = PerformanceMetrics(
+            loadSeconds: 5.1,
+            prefillTokensPerSecond: 90,
+            generationTokensPerSecond: 3.2,
+            peakMemoryMB: 2169,
+            memoryBudgetMB: 6000,
+            thermalStateBefore: "nominal",
+            thermalStateAfter: "nominal",
+            tokensGenerated: 600,
+            wallClockSeconds: 900,
+            generationRunsTokensPerSecond: [3.21, 3.19, 3.20],
+            thermallyConstrained: true,
+            throttleDropPercent: 0.6,
+            measurementIssues: ["low power mode"]
+        )
+        #expect(metrics.throughputIsComparable == false)
+
+        let data = try JSONEncoder().encode(metrics)
+        let decoded = try JSONDecoder().decode(PerformanceMetrics.self, from: data)
+        #expect(decoded.measurementIssues == ["low power mode"])
+        #expect(decoded.thermallyConstrained)
+
+        let report = BenchmarkReport(
+            appVersion: "1.2.0",
+            appBuild: "4",
+            modelId: "unsloth/gemma-4-E2B-it-GGUF",
+            modelName: "Gemma 4 E2B",
+            backend: "llama.cpp Vision",
+            quantization: "Q4_K_M",
+            parameterSize: "2B",
+            device: DeviceSnapshot(
+                identifier: "iPhone18,4", marketingName: "iPhone Air",
+                chip: "A19", ramGB: 11.5, iOSVersion: "26.6.1"
+            ),
+            performance: metrics,
+            quality: nil
+        )
+        #expect(report.summaryLine.contains("[invalid: low power mode - not comparable]"))
+        #expect(!report.summaryLine.contains("throttled"))
     }
 }

@@ -60,8 +60,13 @@ final class AppleIntelligenceEngine: InferenceEngine, @unchecked Sendable {
     /// own name for argmax decoding and is what makes the benchmark's
     /// deterministic profile mean the same thing here as on the other
     /// backends. Above 0, `topK` and `seed` are carried by
-    /// `.random(top:seed:)`. `topP` and `repetitionPenalty` have no
-    /// counterpart in the framework and are dropped.
+    /// `.random(top:seed:)`. `topP`, `repetitionPenalty`, `minP` and
+    /// `presencePenalty` have no counterpart in the framework and are dropped.
+    ///
+    /// TODO: for chat, passing nil `sampling` and nil `temperature` lets the
+    /// system choose its own defaults, which is what Apple recommends. Not
+    /// changed in 1.2: this keeps today's options (top-k 40 at 0.7) unless
+    /// the catalog entry carries `sampling`.
     private static func generationOptions(
         from parameters: GenerationParameters
     ) -> GenerationOptions {
@@ -75,6 +80,17 @@ final class AppleIntelligenceEngine: InferenceEngine, @unchecked Sendable {
             sampling: .random(top: max(1, parameters.topK), seed: parameters.seed),
             temperature: Double(parameters.temperature),
             maximumResponseTokens: parameters.maxTokens
+        )
+    }
+
+    /// What the inspector shows for this backend. There is no transcript
+    /// string: the framework takes the instructions once per session, keeps
+    /// the earlier turns itself, and receives only the new message.
+    nonisolated static func renderedPrompt(instructions: String?, prompt: String) -> RenderedPrompt {
+        RenderedPrompt(
+            text: "[Session instructions]\n\(instructions ?? "(none)")\n\n[Message]\n\(prompt)",
+            source: .session,
+            template: nil
         )
     }
 
@@ -95,11 +111,7 @@ final class AppleIntelligenceEngine: InferenceEngine, @unchecked Sendable {
                 // framework applies its own weighting. A caller that changes
                 // the system prompt mid-conversation therefore gets a fresh
                 // session rather than a silently ignored instruction.
-                let systemPrompt = turns
-                    .last(where: { $0.role == .system })?
-                    .content
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let wanted = (systemPrompt?.isEmpty == false) ? systemPrompt : nil
+                let wanted = SystemPrompt.instructions(in: turns)
                 if wanted != self.sessionInstructions {
                     self.sessionInstructions = wanted
                     self.session = Self.makeSession(instructions: wanted)
@@ -111,6 +123,9 @@ final class AppleIntelligenceEngine: InferenceEngine, @unchecked Sendable {
 
                 do {
                     let prompt = turns.last(where: { $0.role == .user })?.content ?? ""
+                    continuation.yield(.diagnostic(.promptRendered(
+                        Self.renderedPrompt(instructions: wanted, prompt: prompt)
+                    )))
                     let options = Self.generationOptions(from: parameters)
                     let start = Date()
                     var previousText = ""

@@ -15,8 +15,6 @@ struct SetupView: View {
     @State private var highlightedModelID: String?
     @State private var showImportSheet = false
 
-    private var store: InstalledModelsStore { InstalledModelsStore.shared }
-
     /// Drives the update banner at the top of the ready view. The check
     /// itself runs in `ContentView` (launch + every foreground); this view
     /// only renders whatever the checker has already decided.
@@ -197,6 +195,11 @@ struct SetupView: View {
 
                     DeviceInfoView(device: device)
 
+                    // Every downloaded model (catalog, imported, or dropped
+                    // from the catalog) behind one row, so the catalog
+                    // below keeps its layout. Hidden until there is one.
+                    MyModelsSummaryRow()
+
                     // Said once for the whole list rather than per card.
                     HFSourceBanner()
 
@@ -221,26 +224,24 @@ struct SetupView: View {
                         }
                     }
 
-                    importedSection
-
                     filterBar
 
-                    if result.allCompatible.count > 1 {
-                        let otherCompatible = applyFilters(Array(result.allCompatible.dropFirst()))
-                        if !otherCompatible.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Other compatible models")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                    // By id, not position: the recommendation is not always
+                    // the first compatible model.
+                    let otherCompatible = applyFilters(result.otherCompatible)
+                    if !otherCompatible.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Other compatible models")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
 
-                                ForEach(otherCompatible) { model in
-                                    ModelCardView(
-                                        model: model,
-                                        isRecommended: false,
-                                        isHighlighted: highlightedModelID == model.id
-                                    )
-                                    .id(model.id)
-                                }
+                            ForEach(otherCompatible) { model in
+                                ModelCardView(
+                                    model: model,
+                                    isRecommended: false,
+                                    isHighlighted: highlightedModelID == model.id
+                                )
+                                .id(model.id)
                             }
                         }
                     }
@@ -305,40 +306,6 @@ struct SetupView: View {
                 // scanning, react now that the cards actually exist.
                 if let id = focusedModelID {
                     handleFocusRequest(id: id, proxy: proxy)
-                }
-            }
-        }
-    }
-
-    // MARK: - Imported models
-
-    /// Sourced from the registry rather than the catalog — these exist only
-    /// because the user pasted a link, and they must show up while they are
-    /// still downloading, not just once installed.
-    @ViewBuilder
-    private var importedSection: some View {
-        let imported = store.importedModels
-        if !imported.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Imported models")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                ForEach(imported) { model in
-                    ModelCardView(
-                        model: model,
-                        isRecommended: false,
-                        isHighlighted: highlightedModelID == model.id
-                    )
-                    .id(model.id)
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            ModelDownloader.shared.delete(model)
-                            store.unregister(model)
-                        } label: {
-                            Label("Remove from list", systemImage: "trash")
-                        }
-                    }
                 }
             }
         }

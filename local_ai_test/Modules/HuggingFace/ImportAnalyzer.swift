@@ -20,14 +20,42 @@ struct ImportFormat: Identifiable, Hashable, Sendable {
 }
 
 struct GGUFQuantOption: Identifiable, Hashable, Sendable {
+    /// The file handed to llama.cpp: the only file, or part 1 of a split set
+    /// (the lowest part present when part 1 is missing from the listing).
     let filename: String
+    /// Bytes of every part together.
     let size: Int64
+    /// Every file of this quantization present in the listing, in part
+    /// order. One entry for an ordinary single-file GGUF.
+    let parts: [String]
+    /// Parts the set declares in its names (`-of-00004` → 4). 1 when the
+    /// file is not split.
+    let expectedParts: Int
+
+    init(filename: String, size: Int64, parts: [String]? = nil, expectedParts: Int = 1) {
+        self.filename = filename
+        self.size = size
+        self.parts = parts ?? [filename]
+        self.expectedParts = expectedParts
+    }
 
     var id: String { filename }
 
     /// "Q4_K_M" pulled out of "Model-Name-Q4_K_M.gguf". Falls back to the file
     /// stem for repos that do not follow the convention.
     var label: String { ImportAnalyzer.quantLabel(for: filename) }
+
+    var isSplit: Bool { expectedParts > 1 }
+
+    /// Part numbers the names promise but the listing does not have.
+    var missingParts: [Int] {
+        guard isSplit else { return [] }
+        let present = Set(parts.compactMap { GGUFNaming.splitPart($0)?.index })
+        return (1...expectedParts).filter { !present.contains($0) }
+    }
+
+    /// llama.cpp loads a split model only with every part on disk.
+    var isComplete: Bool { missingParts.isEmpty }
 }
 
 struct ImportAnalysis: Sendable {
@@ -47,6 +75,10 @@ struct ImportAnalysis: Sendable {
     let ggufQuants: [GGUFQuantOption]
     let defaultQuant: GGUFQuantOption?
     let mmprojFilename: String?
+    /// `general.architecture` as Hugging Face reports it for the repo's GGUF
+    /// files (`expand[]=gguf`). Filled in after the listing; nil when the
+    /// repo has no GGUF or the lookup failed.
+    var ggufArchitecture: String? = nil
     /// Smallest `ggml-*.bin`. whisper.cpp repos host every model size, so the
     /// downloader must be pinned to one file or it fetches tens of gigabytes.
     let whisperFilename: String?
@@ -225,26 +257,51 @@ enum ImportAnalyzer {
 
     // MARK: GGUF helpers
 
-    /// Selectable quantizations, smallest first. Vision projectors are not
-    /// quantization choices, so they are excluded.
+    /// Selectable quantizations, smallest first. Vision projectors and
+    /// importance matrices are not quantization choices, so they are
+    /// excluded. The parts of a split model (`-00001-of-00003.gguf`, ...) are
+    /// ONE choice sized as their sum: offered one by one, a 5 GB part of a
+    /// 19 GB model looked like a 5 GB model that fits, downloaded, and could
+    /// never load.
     static func ggufQuants(in files: [HFSibling]) -> [GGUFQuantOption] {
-        files
-            .filter {
-                $0.rfilename.hasSuffix(".gguf")
-                    && !GGUFNaming.isProjector($0.rfilename)
+        let weights = files.filter { GGUFNaming.isWeights($0.rfilename) }
+
+        var single: [GGUFQuantOption] = []
+        var sets: [String: [(part: GGUFNaming.SplitPart, file: HFSibling)]] = [:]
+        for file in weights {
+            if let part = GGUFNaming.splitPart(file.rfilename) {
+                sets["\(part.prefix)|\(part.count)", default: []].append((part, file))
+            } else {
+                single.append(GGUFQuantOption(filename: file.rfilename, size: file.size ?? 0))
             }
-            .map { GGUFQuantOption(filename: $0.rfilename, size: $0.size ?? 0) }
-            .sorted { $0.size < $1.size }
+        }
+
+        let split = sets.values.map { members -> GGUFQuantOption in
+            let ordered = members.sorted { $0.part.index < $1.part.index }
+            return GGUFQuantOption(
+                filename: ordered[0].file.rfilename,
+                size: ordered.reduce(0) { $0 + ($1.file.size ?? 0) },
+                parts: ordered.map(\.file.rfilename),
+                expectedParts: ordered[0].part.count
+            )
+        }
+
+        return (single + split).sorted {
+            $0.size == $1.size ? $0.filename < $1.filename : $0.size < $1.size
+        }
     }
 
     /// Q4_K_M is the usual sweet spot; without it, take the middle of the
-    /// size-sorted list rather than the smallest or largest.
+    /// size-sorted list rather than the smallest or largest. An incomplete
+    /// split set is never the default: it cannot load.
     static func defaultQuant(from quants: [GGUFQuantOption]) -> GGUFQuantOption? {
-        guard !quants.isEmpty else { return nil }
-        if let preferred = quants.first(where: { $0.label.uppercased() == "Q4_K_M" }) {
+        let loadable = quants.filter(\.isComplete)
+        let pool = loadable.isEmpty ? quants : loadable
+        guard !pool.isEmpty else { return nil }
+        if let preferred = pool.first(where: { $0.label.uppercased() == "Q4_K_M" }) {
             return preferred
         }
-        return quants[quants.count / 2]
+        return pool[pool.count / 2]
     }
 
     static func mmprojFilename(in files: [HFSibling]) -> String? {
@@ -281,7 +338,12 @@ enum ImportAnalyzer {
 
     static func quantLabel(for filename: String) -> String {
         var stem = basename(filename)
-        if stem.hasSuffix(".gguf") { stem = String(stem.dropLast(5)) }
+        if let part = GGUFNaming.splitPart(stem) {
+            // "Model-Q8_0-00001-of-00003.gguf" is labelled by its set.
+            stem = part.prefix
+        } else if stem.hasSuffix(".gguf") {
+            stem = String(stem.dropLast(5))
+        }
         guard let regex = quantPattern else { return stem }
         let range = NSRange(stem.startIndex..<stem.endIndex, in: stem)
         // Last match wins: the quant tag is a suffix, and model names can
@@ -338,23 +400,12 @@ enum ImportAnalyzer {
             usable = device.usableRAMGB
         }
 
-        let verdict: ResourceVerdict
-        if ramGB > usable {
-            verdict = .wontFit
-        } else if ramGB > usable - 1.0 {
-            // Within 1 GB of the ceiling: it loads, but a background app or a
-            // long context will push it over.
-            verdict = .tight
-        } else {
-            verdict = .fits
-        }
-
         return ResourceEstimate(
             diskGB: Double(downloadBytes) / bytesPerGB,
             ramGB: ramGB,
             usableRAMGB: usable,
             freeDiskGB: Double(freeDiskBytes) / bytesPerGB,
-            ramVerdict: verdict
+            ramVerdict: ImportFit.verdict(ramGB: ramGB, budgetGB: usable)
         )
     }
 

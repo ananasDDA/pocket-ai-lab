@@ -443,8 +443,8 @@ struct PALGenerationMeterTests {
         meter.observe(.diagnostic(.promptProcessed(tokenCount: 312, timeMs: 400)), at: start.addingTimeInterval(1.5))
         #expect(meter.ttftMs == 500)
         #expect(meter.tokensGenerated == 3, "delta count without an engine report")
-        // (3 - 1) tokens over the 1.0 s between the first and the last token.
-        #expect(abs((meter.decodeTokensPerSecond(end: start.addingTimeInterval(2)) ?? 0) - 2.0) < 1e-9)
+        // Three tokens are under `minimumTokensForRate`: no rate, only the count.
+        #expect(meter.decodeTokensPerSecond(end: start.addingTimeInterval(2)) == nil)
         meter.observe(.diagnostic(.finished(tokensGenerated: 11, tokensPerSecond: 9)), at: start.addingTimeInterval(1.6))
         #expect(meter.tokensGenerated == 11, "the engine's own count wins")
         #expect(abs((meter.decodeTokensPerSecond(end: start.addingTimeInterval(2)) ?? 0) - 10.0) < 1e-9)
@@ -494,6 +494,33 @@ struct PALGenerationMeterTests {
         #expect(Set(record.keys) == ["kind", "model_id", "backend", "backend_rev", "quantization",
                                      "context_size", "outcome", "error_kind"])
         #expect(PALAnalyticsSchema.sanitize(record, for: event).count == record.count)
+    }
+
+    /// An imported F16 GGUF answered with zero tokens seven times in 1.1. The
+    /// outcome stays "ok" (the server allows no "empty"), and the record must
+    /// carry tokens_generated 0 so such replies can be filtered out.
+    @Test func anEmptyReplyIsOkWithZeroTokens() {
+        var meter = PALGenerationMeter(start: start)
+        meter.observe(.diagnostic(.finished(tokensGenerated: 0, tokensPerSecond: 0)),
+                      at: start.addingTimeInterval(0.4))
+        let (event, record) = PALRecords.generation(
+            model: model, contextSize: 4096, meter: meter, end: start.addingTimeInterval(0.4), outcome: "ok",
+            errorKind: nil, conditions: conditions(), hasImage: false, hasAudio: false)
+        #expect(event == .generationMeasured)
+        let props = PALAnalyticsSchema.sanitize(record, for: event)
+        #expect(props["outcome"] == .string("ok"))
+        #expect(props["tokens_generated"] == .int(0))
+        #expect(props["generation_tps"] == nil)
+        #expect(PALAnalyticsSchema.missingRequired(props, for: event).isEmpty)
+    }
+
+    @Test func aClassifiedLoadFailureKeepsItsKind() {
+        let oom = LlamaLoadError(cause: .outOfMemory, logExcerpt: [])
+        let arch = LlamaLoadError(cause: .unsupportedArchitecture("foo"), logExcerpt: [])
+        let split = LlamaLoadError(cause: .missingSplitParts, logExcerpt: [])
+        #expect(PALErrorClassifier.kind(of: oom, phase: .load) == "out_of_memory")
+        #expect(PALErrorClassifier.kind(of: arch, phase: .load) == "unsupported_architecture")
+        #expect(PALErrorClassifier.kind(of: split, phase: .load) == "split_incomplete")
     }
 }
 
@@ -637,5 +664,35 @@ struct PALBenchmarkFlatteningTests {
             }
         }
         #expect(!props.keys.contains { $0.contains("answer") || $0.contains("task") || $0.contains("secret") })
+    }
+}
+
+@Suite struct PALGenerationRateTests {
+    private func meter(tokens: Int, over seconds: TimeInterval) -> (PALGenerationMeter, Date) {
+        let start = Date(timeIntervalSince1970: 1_000)
+        var m = PALGenerationMeter(start: start)
+        let first = start.addingTimeInterval(0.1)
+        for i in 0..<tokens {
+            let t = tokens > 1 ? first.addingTimeInterval(seconds * Double(i) / Double(tokens - 1)) : first
+            m.observe(.textDelta("x"), at: t)
+        }
+        return (m, first.addingTimeInterval(seconds))
+    }
+
+    @Test func aShortReplyCarriesNoRate() {
+        let (m, end) = meter(tokens: 3, over: 0.002)
+        #expect(m.decodeTokensPerSecond(end: end) == nil)
+    }
+
+    @Test func aRealReplyCarriesItsRate() throws {
+        let (m, end) = meter(tokens: 41, over: 2.0)
+        let rate = try #require(m.decodeTokensPerSecond(end: end))
+        #expect(abs(rate - 20.0) < 0.001)
+    }
+
+    @Test func anEmptyReplyCarriesNoRate() {
+        let (m, end) = meter(tokens: 0, over: 0.01)
+        #expect(m.decodeTokensPerSecond(end: end) == nil)
+        #expect(m.tokensGenerated == 0)
     }
 }

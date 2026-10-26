@@ -196,7 +196,9 @@ nonisolated struct BenchmarkReport: Codable, Sendable, Hashable, Identifiable {
         if let sd = performance.generationTokensPerSecondStdDev {
             line += String(format: " (SD %.2f, n=%d)", sd, performance.generationRepetitions)
         }
-        if performance.thermallyConstrained {
+        if let issues = performance.measurementIssues, !issues.isEmpty {
+            line += " [invalid: \(issues.joined(separator: ", ")) - not comparable]"
+        } else if performance.thermallyConstrained {
             if let drop = performance.throttleDropPercent {
                 line += String(format: " [throttled -%.0f%% - not comparable]", drop)
             } else {
@@ -537,6 +539,17 @@ nonisolated struct PerformanceMetrics: Codable, Sendable, Hashable {
     /// `nil` on a v1 report.
     let peakThermalState: String?
 
+    /// Conditions seen during the run that make its throughput meaningless,
+    /// in the order they were first seen: "low power mode" (the OS caps CPU
+    /// and GPU clocks) and "app in background" (the OS restricts GPU work and
+    /// defers downloads). `nil` when none was seen, and on older reports.
+    ///
+    /// A run with any of these also has `thermallyConstrained` set, so every
+    /// consumer that already excludes throttled runs excludes it too. Such a
+    /// run is steady (its repetitions agree), so the throttle rule alone
+    /// would have published it as a slow model.
+    let measurementIssues: [String]?
+
     /// The pp512 / tg128 block, when it ran. `nil` on a v1 report and when
     /// `BenchmarkOptions.runStandardProtocol` was turned off.
     let standardProtocol: StandardProtocolMetrics?
@@ -562,6 +575,7 @@ nonisolated struct PerformanceMetrics: Codable, Sendable, Hashable {
         thermallyConstrained: Bool = false,
         throttleDropPercent: Double? = nil,
         peakThermalState: String? = nil,
+        measurementIssues: [String]? = nil,
         standardProtocol: StandardProtocolMetrics? = nil,
         metricsVersion: Int = PerformanceMetrics.currentMetricsVersion
     ) {
@@ -582,6 +596,7 @@ nonisolated struct PerformanceMetrics: Codable, Sendable, Hashable {
         self.thermallyConstrained = thermallyConstrained
         self.throttleDropPercent = throttleDropPercent
         self.peakThermalState = peakThermalState
+        self.measurementIssues = measurementIssues
         self.standardProtocol = standardProtocol
         self.metricsVersion = metricsVersion
     }
@@ -594,7 +609,7 @@ nonisolated struct PerformanceMetrics: Codable, Sendable, Hashable {
         case generationTokensPerSecondStdDev, generationRunsTokensPerSecond
         case generationRunsTokenCounts, prefillRunsTokensPerSecond
         case warmupPerformed, thermallyConstrained, throttleDropPercent
-        case peakThermalState
+        case peakThermalState, measurementIssues
         case standardProtocol, metricsVersion
     }
 
@@ -632,6 +647,7 @@ nonisolated struct PerformanceMetrics: Codable, Sendable, Hashable {
             // file keeps the flag exactly as it was stored, without a drop.
             throttleDropPercent: try c.decodeIfPresent(Double.self, forKey: .throttleDropPercent),
             peakThermalState: try c.decodeIfPresent(String.self, forKey: .peakThermalState),
+            measurementIssues: try c.decodeIfPresent([String].self, forKey: .measurementIssues),
             standardProtocol: try c.decodeIfPresent(
                 StandardProtocolMetrics.self, forKey: .standardProtocol
             ),

@@ -27,20 +27,25 @@ enum ChatTemplateSource: Equatable, Sendable {
     case custom
     /// This app's built-in format for the family the model id looks like.
     case fallback(PromptFamily)
+    /// Apple's Foundation Models: no transcript string at all. The system
+    /// prompt becomes the session's instructions and the framework formats
+    /// the rest itself.
+    case session
 
     var label: String {
         switch self {
         case .model:              return "Model's own"
         case .custom:             return "Custom"
         case .fallback(let f):    return "App fallback (\(f.rawValue))"
+        case .session:            return "Apple session"
         }
     }
 
     /// Whether the format is the model's real one rather than a guess.
     var isAuthoritative: Bool {
         switch self {
-        case .model, .custom: return true
-        case .fallback:       return false
+        case .model, .custom, .session: return true
+        case .fallback:                 return false
         }
     }
 }
@@ -119,8 +124,15 @@ enum ChatTemplateResolver {
            let text = LlamaChatTemplate.render(turns: turns, template: custom) {
             return RenderedPrompt(text: text, source: .custom, template: custom)
         }
+        // From here on the format is the app's choice, not the user's: the
+        // history is written the way the model generated it, and models
+        // without a system role get the labelled fold.
+        let sent = historyAsGenerated(turns, modelID: modelID)
         if let embedded,
-           let text = LlamaChatTemplate.render(turns: turns, template: embedded) {
+           let text = LlamaChatTemplate.render(
+               turns: foldsSystemTurn(embedded) ? SystemPrompt.foldedIntoFirstUser(sent) : sent,
+               template: embedded
+           ) {
             return RenderedPrompt(
                 text: closingReasoning(text, modelID: modelID),
                 source: .model,
@@ -129,7 +141,7 @@ enum ChatTemplateResolver {
         }
         let family = PromptFormatter.detectFamily(modelId: modelID)
         return RenderedPrompt(
-            text: closingReasoning(PromptFormatter.format(turns: turns, family: family), modelID: modelID),
+            text: closingReasoning(PromptFormatter.format(turns: sent, family: family), modelID: modelID),
             source: .fallback(family),
             template: nil
         )
@@ -140,18 +152,55 @@ enum ChatTemplateResolver {
     /// request this app makes).
     static let qwen3EmptyReasoning = "<think>\n\n</think>\n\n"
 
+    /// Qwen 3 and 3.5: the id test is "qwen3", which covers both and leaves
+    /// Qwen 2.5 alone.
+    static func isQwen3(_ modelID: String) -> Bool {
+        modelID.lowercased().contains("qwen3")
+    }
+
     /// Qwen 3 and 3.5 ship a Jinja template that llama.cpp b8882 does not
     /// interpret: it sniffs `<|im_start|>` and writes plain ChatML, which
     /// drops the empty reasoning block the real template ends with. Without
     /// it the model opens its reply with `<think>` and spends the whole
-    /// token budget reasoning. The id test is "qwen3", which covers Qwen 3
-    /// and 3.5 and leaves Qwen 2.5 alone. A user's custom template is never
-    /// touched: that one says exactly what it wants.
+    /// token budget reasoning. A user's custom template is never touched:
+    /// that one says exactly what it wants.
     static func closingReasoning(_ text: String, modelID: String) -> String {
-        guard modelID.lowercased().contains("qwen3"),
-              text.hasSuffix("<|im_start|>assistant\n")
-        else { return text }
+        guard isQwen3(modelID), text.hasSuffix("<|im_start|>assistant\n") else { return text }
         return text + qwen3EmptyReasoning
+    }
+
+    /// The earlier replies as the model actually produced them. Every Qwen 3
+    /// / 3.5 reply was generated after `qwen3EmptyReasoning`
+    /// (`closingReasoning`), so that block is part of the reply's context in
+    /// the KV cache. Rendered without it - which is what Qwen's own template
+    /// does with past turns - the next prompt departs from the cache four
+    /// tokens before the previous reply: every turn re-read the whole
+    /// previous reply plus the new message (2026-10-24 daily-use run: 107
+    /// prompt tokens, 103 reused on the next turn). With the block written
+    /// back, the next prompt extends the cached one and only the new
+    /// message is decoded. The first turn has no reply yet, so it is
+    /// unchanged. A reply that already carries a reasoning block keeps it.
+    static func historyAsGenerated(_ turns: [ChatTurn], modelID: String) -> [ChatTurn] {
+        guard isQwen3(modelID) else { return turns }
+        return turns.map { turn in
+            guard turn.role == .assistant, !turn.content.hasPrefix("<think>") else { return turn }
+            return ChatTurn(
+                role: .assistant,
+                content: qwen3EmptyReasoning + turn.content,
+                attachments: turn.attachments
+            )
+        }
+    }
+
+    /// Whether llama.cpp renders this template without a system role. It
+    /// recognises Gemma 2 / 3 by `<start_of_turn>` and folds a system turn
+    /// into the first user turn behind a bare blank line, which Gemma 3 read
+    /// as part of the user's message. The labelled fold is done first so
+    /// llama.cpp never sees a system turn. (Gemma 4's `<|turn>` template is
+    /// not one llama.cpp b8882 renders; it reaches the fallback, which has a
+    /// system role.)
+    static func foldsSystemTurn(_ template: String) -> Bool {
+        template.contains("<start_of_turn>")
     }
 
     /// What the UI shows before a message is ever sent: which source would

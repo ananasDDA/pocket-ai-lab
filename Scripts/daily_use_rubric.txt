@@ -1,0 +1,289 @@
+DAILY-USE GRADING RUBRIC
+========================
+
+For whoever reads the transcripts of DailyUseDeviceTests (a person or a
+grading model). Input: the per-scenario JSON files written by
+Scripts/daily_use_extract.py (extract/<model>/<scenario>.json). Each file
+holds every prompt and every full answer, the automatic checks, the
+reference ("what a correct answer contains") and the numbers.
+
+The automatic checks are a first sort, not a grade. They miss things in
+both directions: a check can pass on an answer that is wrong for another
+reason, and fail on a good answer worded unusually. Read the answer, then
+look at the check, never the other way round. When you disagree with a
+check, say so in the notes; that is how the checks get fixed.
+
+Score every scenario 1 to 5. Use the anchors below; 2 and 4 are for
+answers between two anchors. Then apply the red flags, then the speed and
+heat rules, then write the verdict.
+
+
+1. GENERAL ANCHORS (apply to every scenario)
+--------------------------------------------
+
+5  Correct, complete, does what was asked in the form asked (length,
+   format, language). A user would copy it and move on.
+3  Usable after a second look: one small error, a missed detail, or the
+   wrong length/format, but the substance is right. A user would re-ask
+   or fix it by hand.
+1  Wrong, missing, refused, broken, in the wrong language, or so long or
+   garbled that a user gives up.
+
+Reasoning blocks (<think>...</think>) are not graded as content, but a
+reply that is only reasoning, or that runs out of the 512-token cap before
+the answer starts (hit_token_cap = true, nothing after the block), is a 1.
+
+
+2. PER-SCENARIO ANCHORS
+-----------------------
+
+chat_recall (10 turns, recall name/city/cat in turn 10)
+  5  All three facts in turn 10; earlier turns short and on topic.
+  3  Two facts, or all three but earlier turns ramble or ignore "keep it
+     short".
+  1  Zero or one fact, or invents a fact (wrong name or city).
+  Check context.first_turn_kept on the last step: if false, the engine
+  trimmed turn 1 away, so a miss is a context limit, not forgetting. Note
+  it, still score what the user sees.
+
+summarize_long (1,750-word article, "5 bullet points")
+  5  Five bullets, each a real point from the article (early collections,
+     printing, subscription libraries, tax funding, Carnegie, open shelves,
+     digital era), no invented dates or names.
+  3  Four or six bullets, or one bullet vague or slightly wrong.
+  1  Not a list, made-up history, or summarises only the first section.
+
+rewrite_email (sloppy email, polite, under 120 words)
+  5  Polite, keeps every fact (report late, sales numbers late and wrong,
+     Tuesday if fixed by Monday, move the 1:1, dentist at 3), under 120
+     words, email only.
+  3  Drops one fact, or adds a preamble ("Here is the rewritten email:").
+  1  Changes the facts (new deadline, invented reason), over 160 words,
+     or answers the email instead of rewriting it.
+
+extract_json (appointment to JSON: date, time, place, people)
+  5  Valid JSON, exactly the four keys, 2026-03-12 / 3:30 PM / Riverside
+     Health Clinic, 14 Harbor Road / Dr. Elena Ruiz and Ana.
+  3  Valid JSON with one wrong or partial value, or prose around it.
+  1  Not JSON, wrong keys, or invented values.
+
+translate (paragraph to Spanish, then "the same paragraph" to German)
+  5  Both translations faithful and natural, in the right language, no
+     English left, no commentary longer than a line.
+  3  One small meaning error or one awkward sentence; or the German turn
+     translates the Spanish text instead of the English one but stays
+     faithful.
+  1  Wrong language (check *_in_es / *_in_de), English echo, or a summary
+     instead of a translation.
+
+reasoning_short (bill split; time zone, each in a new chat)
+  5  24.78 each with the working shown briefly; 11:00 AM the same day.
+  3  Right answer with a confused explanation, or right method with a
+     rounding slip (24.77/24.79).
+  1  Wrong answer, or "11:00 AM (previous day)" (wrong day is wrong).
+  Score the two questions separately and average.
+
+code_small (Python dedupe keeping order, with docstring)
+  5  Correct function (dict.fromkeys or a seen-set loop), docstring, works
+     for unhashable-free input, short explanation.
+  3  Correct but no docstring, or a long essay around it, or works only
+     for hashable items without saying so.
+  1  list(set(x)) (loses order), str(item) keys (merges 1 and "1"),
+     syntax errors, or not Python. Check keeps_order, then read the code.
+
+advice_followup (Porto, 3 days, 300 euros without flights; day 2
+cheaper; vegetarian; checklist with total at the end)
+  5  Every later answer honours every earlier constraint: day 2 really
+     cheaper, all food vegetarian from turn 3 on, checklist complete with
+     a total at or under 300 euros that adds up.
+  3  Checklist keeps the constraints but the total does not add up, or
+     one meal suggestion slips (e.g. a bifana) and is not the main item.
+  1  Forgets vegetarian (francesinha, bacalhau, sardines as the plan),
+     goes over budget, drops a day, or the checklist is not a list.
+  This is the most "daily" scenario: weigh it double.
+
+doc_qa (pasted lease, 4 answerable questions + parking, which the lease
+does not mention)
+  5  April 1, 2027 to March 31, 2028; $1,450 due by the 3rd; $2,175
+     returned within 21 days; one cat, $35/month, written notice; parking:
+     "the lease does not say" with no price.
+  3  One answerable fact wrong or missing, parking handled correctly.
+  1  Any invented parking price or rule, or two or more facts wrong.
+  Inventing an answer the document does not contain is the worst failure
+  here: a parking answer with a number is a 1 no matter how good the rest
+  is. Weigh this scenario double.
+
+unknown_entity (a 2019 paper, a Nokia phone, a person; none exist)
+  5  Says it does not know / cannot find it for all three, briefly, maybe
+     suggests where to check. No details.
+  3  Admits uncertainty but then offers "possible" details, or admits for
+     two of three.
+  1  Confidently describes any of them (findings, specs, biography).
+  The keyword check passes on "I'm not aware of it, but here are its
+  specs: ..." - read the whole answer.
+
+non_english_chat (Spanish, German, Japanese; 2 turns each, fresh chats)
+  5  Every answer in the asked language, natural, follows up correctly on
+     turn 2 ("which one is cheapest").
+  3  Right language with some English words or clumsy grammar, or turn 2
+     loses the context.
+  1  Answers in English (or Chinese for Japanese), or mixes languages
+     mid-answer.
+  Score each language; the scenario score is the lowest one, not the
+  average (a user who writes German and gets English is lost).
+
+format_follow (exactly 3 bullets; table with Option/Cost/Time/Pros; one
+sentence under 20 words; numbered steps)
+  5  All four formats exactly as asked, no intro or outro where told not
+     to have one.
+  3  Three of four.
+  1  Two or fewer.
+  An intro line before the 3 bullets ("Here are three tips:") costs half
+  a point, since the prompt said no introduction.
+
+long_session (40 turns, five pasted texts - an article, an email draft, a
+lease, a recipe, a school letter; recall name/job/city in turn 40. Since
+2026-10-24; earlier runs had 20 short turns and never trimmed, so they are
+not comparable)
+  5  Chat answers short (2-3 sentences as asked), the pasted texts handled
+     sensibly (gist, rewrite, lease points, halved amounts, letter dates),
+     recall 3/3.
+  3  Answers drift long (check tokens per step), a pasted text mishandled,
+     or recall 2/3.
+  1  Recall 0-1, or invents facts, or answers stop making sense late in
+     the chat (repetition, mixing up earlier topics).
+  Also note: time to first token per turn (does it grow, and does it
+  spike only on the turns where trimming drops a batch?), the turn where
+  history trimming starts (dropped_turns > 0; trim_events fails if a
+  llama.cpp engine never trimmed), and whether turn 1 was still in the
+  prompt at turn 40 (first_turn_kept). A forgotten fact with
+  first_turn_kept = false is the app's trimming, not the model.
+
+vision_describe (synthetic teal-to-purple gradient with 8x10 orange
+rectangles)
+  5  Gradient (teal/blue to purple), orange rectangles in a grid, says
+     there are no objects/people.
+  3  Gets colours or shapes but not both, or calls it a pattern/wallpaper
+     loosely.
+  1  Invents objects (a building, a keyboard), or "checkerboard" with no
+     orange.
+
+vision_read_text (rendered receipt)
+  5  Total $10.44 and "Maple Street Grocery".
+  3  One of the two.
+  1  Neither, or invented items/prices.
+
+vision_photo_real (real CC0 photos: a Houston street at dusk; a plate of
+rice, chicken, matooke and chapati)
+  5  Street: cars at a red light at sunset, gas station, shop signs;
+     question: the car ahead is white. Food: rice, chicken, a banana or
+     plantain dish, flatbread, on a metal compartment plate; question:
+     not vegetarian because of the chicken.
+  3  Description right in outline with one wrong detail, question right;
+     or description good and question wrong.
+  1  Describes something else, invents text or objects, or says the meal
+     is vegetarian.
+  Do not penalise not knowing "matooke" or "Houston"; do penalise
+  confident wrong specifics (wrong city name, wrong brand read from a
+  sign).
+
+sustained (8 x ~180-word texts back to back)
+  Not graded for quality beyond "on topic and about 180 words". It feeds
+  the heat and throttling judgement below.
+
+
+3. RED FLAGS
+------------
+
+Each red flag found anywhere in a model's run is listed in the verdict.
+The first three cap the verdict at "not for daily use" by themselves.
+
+  INVENTED FACTS     A specific, confident claim that is false or not in
+                     the source: a parking price in doc_qa, specs for the
+                     non-existent phone, a wrong total, a city the user
+                     never named. Worst when the user cannot check it.
+  TEMPLATE LEAKS     Chat-template tokens or role labels in the answer:
+                     <|im_start|>, <end_of_turn>, <|eot_id|>,
+                     "assistant:", "User:" continuing the dialogue on its
+                     own, a reply that writes the user's next turn.
+  BROKEN OUTPUT      Empty replies (outcome "empty"), endless repetition,
+                     a reply cut off by the 512 cap mid-sentence on a
+                     question that needed 100 words, mojibake.
+  IGNORED CONSTRAINT A constraint the user stated earlier is dropped
+                     later (vegetarian, budget, "keep it short", "answer
+                     only from the lease").
+  WRONG LANGUAGE     Answer not in the language of the question or the
+                     one asked for.
+  NEEDLESS REFUSAL   Refuses or moralises on a harmless request (a joke,
+                     a lease question, a photo of food). Apple
+                     Intelligence guardrail errors (outcome "guardrail")
+                     count here; note which prompt triggered it.
+  LENGTH MISMATCH    Ignores the asked length: 3 paragraphs when one
+                     sentence was asked, 400 words for "keep it short",
+                     or one line for "describe". Count it once per
+                     scenario, not per turn.
+  SYSTEM PROMPT ECHO Repeats or talks about its instructions ("As a
+                     helpful assistant on your phone, I ...").
+
+
+4. SPEED, HEAT AND STABILITY
+----------------------------
+
+Numbers come from the extract tables (ttft_ms, tok/s, peak_mb, thermal)
+and the combined table. Rates marked "~" are estimates (Apple
+Intelligence reports no token counts); compare them only roughly.
+
+Speed, judged on the median over all ok steps:
+  good        time to first token under 2 s and decode 15 tok/s or more
+  acceptable  first token 2-5 s, decode 8-15 tok/s (faster than reading)
+  slow        first token over 5 s or decode under 8 tok/s
+  unusable    first token over 15 s on short prompts, or under 4 tok/s
+Long prompts (summarize_long, doc_qa turn 1, the photo turns) are allowed
+up to 3x the first-token time; judge them separately and say which they
+are. In long_session, a first-token time that keeps growing turn after
+turn means the cache is not being reused (check reused_tokens).
+
+Heat and throttling (sustained, and peak_thermal of every scenario):
+  fine      stays nominal/fair, decode drop under 20 % over sustained
+  warm      reaches serious once, or drop 20-35 %
+  hot       reaches serious in more than one scenario, drop over 35 %,
+            or cooldown waits (cooldown_wait_s) add more than 5 minutes
+  critical  any critical reading: cap the verdict at "with caveats"
+
+Stability:
+  Any crash, jetsam kill, NO SUMMARY or timeout of a whole run caps the
+  verdict at "not for daily use" until it is explained. A single step
+  timeout or context_full is noted, not capped.
+  peak_mb within 500 MB of the jetsam limit on this phone is a warning
+  for smaller phones; say so.
+
+
+5. VERDICT
+----------
+
+Weighting for the overall score (1-5):
+  quality  70 %  mean of the scenario scores, advice_followup and doc_qa
+                 counted twice, vision scenarios only for vision models
+  speed    20 %  good 5, acceptable 4, slow 2, unusable 1
+  heat     10 %  fine 5, warm 4, hot 2, critical 1
+
+Then the caps from the red flags and stability rules apply.
+
+  Recommend for daily use   overall 4.0 or more, no capping red flag
+  OK with caveats           overall 3.0-3.9, or a cap to this level;
+                            name the caveat ("slow on long documents",
+                            "English only", "warms the phone")
+  Not for daily use         overall under 3.0, or a capping red flag
+
+Quality outranks speed: a model that is fast and wrong is worse for a
+user than one that is slow and right, because the user cannot tell the
+wrong answer is wrong. Speed decides between two models of similar
+quality, and decides alone only when it is unusable.
+
+Write per model: the verdict, the overall score with its three parts,
+the scenario scores in one line, every red flag with the scenario and a
+short quote (at most a sentence), and the one thing a user would notice
+first. For the A/B runs without a system prompt, compare scenario by
+scenario with the same model's normal run and say which differences are
+larger than sampling noise (a single changed answer is noise; a pattern
+across scenarios is not).

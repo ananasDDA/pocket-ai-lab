@@ -44,6 +44,23 @@ final class ChatViewModel {
     private let store = InstalledModelsStore.shared
     private let inference = InferenceManager.shared
     private let media = MediaPipeline.shared
+    private let systemPrompts = SystemPromptStore.shared
+    private let thermal = ThermalMonitor.shared
+
+    /// Global sampling for chat messages. 512-token replies; see
+    /// `GenerationParameters.chat`.
+    static let parameters = GenerationParameters.chat
+
+    /// What one chat message to `model` is sent with: the global parameters
+    /// with the model's catalog `sampling` merged over them (members it does
+    /// not set keep the global value). A curated model reads its sampling
+    /// from the catalog in effect, not from the installed snapshot
+    /// (`ModelSampling.effective`). Without catalog sampling this is exactly
+    /// `parameters`.
+    static func parameters(for model: AIModel?) -> GenerationParameters {
+        let entry = model.flatMap { ModelCatalog.model(id: $0.id) }
+        return parameters.applying(ModelSampling.effective(for: model, catalogEntry: entry))
+    }
 
     /// Owns the in-flight `send()` work so the stop button can cancel generation.
     @ObservationIgnored
@@ -56,6 +73,9 @@ final class ChatViewModel {
 
     var selectedModel: AIModel? { store.selectedModel }
     var installedModels: [AIModel] { store.installedModels }
+    /// What the model picker offers: installed models that can chat. Speech
+    /// models keep their own roles (voice messages, speaking replies).
+    var chatModels: [AIModel] { store.chatModels }
     var inferenceState: InferenceState { inference.state }
     /// What the engine was doing when it last failed. Lets the status label
     /// say "generation failed" instead of blaming the load for an error that
@@ -64,6 +84,15 @@ final class ChatViewModel {
 
     var currentCapabilities: ModelCapabilities {
         inference.currentCapabilities
+    }
+
+    /// What the chat shows about heat: nil while the phone is cool.
+    var thermalAdvice: ThermalAdvice? {
+        ThermalAdvisor.advice(
+            thermal: thermal.state,
+            loaded: selectedModel,
+            installed: installedModels
+        )
     }
 
     /// Whether a Kokoro TTS model is installed and ready to be used as the
@@ -93,6 +122,7 @@ final class ChatViewModel {
     // MARK: - Model switching
 
     func selectModel(_ model: AIModel) {
+        guard model.canBeChatModel else { return }
         store.selectedModel = model
         messages = []
         stagedAttachments = []
@@ -104,7 +134,7 @@ final class ChatViewModel {
     }
 
     func prepareCurrentModel() async {
-        guard let model = selectedModel else { return }
+        guard let model = selectedModel, model.canBeChatModel else { return }
         await inference.prepare(model: model)
     }
 
@@ -141,7 +171,18 @@ final class ChatViewModel {
         guard !(text.isEmpty && attachments.isEmpty), !isGenerating else { return }
         inputText = ""
         stagedAttachments = []
+        send(text: text, attachments: attachments)
+    }
 
+    /// Asks the model to carry on after a reply that hit the token cap.
+    /// Leaves whatever the user is typing in the composer alone.
+    func continueReply() {
+        guard !isGenerating, messages.last?.stoppedAtLimit == true else { return }
+        messages[messages.count - 1].stoppedAtLimit = false
+        send(text: ReplyLimit.continuePrompt, attachments: [])
+    }
+
+    private func send(text: String, attachments: [ChatAttachment]) {
         messages.append(ChatMessage(role: .user, text: text, attachments: attachments))
 
         generationTask?.cancel()
@@ -176,15 +217,24 @@ final class ChatViewModel {
             let probe = PALChatProbe(model: self.selectedModel, attachments: attachments)
 
             do {
-                let turns: [ChatTurn] = self.messages.dropLast().map { msg in
+                let history: [ChatTurn] = self.messages.dropLast().map { msg in
                     ChatTurn(
                         role: msg.chatRole,
-                        content: msg.text,
+                        content: msg.isNotice ? "" : msg.text,
                         attachments: msg.attachments
                     )
                 }
+                let turns = SystemPrompt.requestTurns(
+                    history: history,
+                    systemPrompt: self.systemPrompts.effective,
+                    capabilities: self.selectedModel?.capabilities
+                )
+                let parameters = Self.parameters(for: self.selectedModel)
 
-                var stream = probe.tap(self.inference.generate(turns: turns, parameters: .default))
+                var stream = probe.tap(self.inference.generate(turns: turns, parameters: parameters))
+                // The engine's own count, when it reports one: tells a reply
+                // that ended at once (0 tokens) from one that was all blanks.
+                var reportedTokens: Int?
                 if self.speakResponses, let kokoro = self.findInstalledKokoro() {
                     stream = self.media.streamToSpeech(source: stream, using: kokoro)
                 }
@@ -207,6 +257,12 @@ final class ChatViewModel {
                            self.messages[userIndex].role == .user {
                             self.messages[userIndex].sentPrompt = prompt
                         }
+                    case .diagnostic(.finished(let tokensGenerated, _)):
+                        reportedTokens = tokensGenerated
+                        self.messages[assistantIndex].stoppedAtLimit = ReplyLimit.wasCut(
+                            tokensGenerated: tokensGenerated,
+                            maxTokens: parameters.maxTokens
+                        )
                     case .diagnostic:
                         break
                     }
@@ -216,8 +272,15 @@ final class ChatViewModel {
                     self.messages[assistantIndex].text = self.messages[assistantIndex].text
                         .trimmingCharacters(in: .whitespacesAndNewlines)
 
-                    if self.messages[assistantIndex].text.isEmpty {
-                        self.messages[assistantIndex].text = "(Empty response)"
+                    if let empty = EmptyReply.detect(
+                        text: self.messages[assistantIndex].text,
+                        tokensGenerated: reportedTokens
+                    ) {
+                        // The measurement record still says outcome "ok"
+                        // with tokens_generated 0 (the server's outcome list
+                        // has no "empty"); the user gets the likely cause.
+                        self.messages[assistantIndex].text = EmptyReply.message(for: empty)
+                        self.messages[assistantIndex].isNotice = true
                     }
                 }
                 probe.finish(error: nil)

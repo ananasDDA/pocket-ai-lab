@@ -8,10 +8,12 @@
 //  down to something the context window can hold.
 //
 //  Media is replayed for EVERY turn that carries it, not just the last
-//  one. The KV cache is rebuilt from scratch on each turn (see
-//  `LlamaVisionContext.generate`), so an image that is not in the prompt is
-//  an image the model can no longer see - "what colour was that car?" two
-//  messages later has to re-send the picture.
+//  one. The KV cache only keeps the prefix a new prompt shares with the
+//  previous one (see `LlamaVisionContext.generate`), so an image that is
+//  not in the prompt is an image the model can no longer see - "what
+//  colour was that car?" two messages later has to re-send the picture. A
+//  re-sent picture that is still in the cache at the same place costs
+//  nothing: it is recognised by content and not encoded again.
 //
 //  Pure Swift on purpose: no dependency on the `llama` module, so it is
 //  unit-testable on any target.
@@ -36,13 +38,16 @@ enum VisionPromptBuilder {
 
     /// How many images a prompt may carry, newest first.
     ///
-    /// Every image in the prompt is re-encoded on every turn - the KV cache
-    /// is rebuilt from the conversation each time - so an unbounded replay
-    /// makes each message slower than the last and crowds the window with
-    /// pictures the current question is not about. Four keeps "compare these
-    /// two" and "what was in the first photo" working while putting a
-    /// ceiling on the cost; a document parser, where each page is a separate
-    /// job, is better served by Clear chat between pages.
+    /// Images in the cached prefix are not encoded again, but every image
+    /// still occupies the window, and whenever the prefix changes (the
+    /// oldest turns are trimmed, or the oldest image falls out of this cap)
+    /// everything after the change is decoded again, images included. An
+    /// unbounded replay crowds the window with pictures the current
+    /// question is not about and makes those rebuilds ever more expensive.
+    /// Four keeps "compare these two" and "what was in the first photo"
+    /// working while putting a ceiling on the cost; a document parser, where
+    /// each page is a separate job, is better served by Clear chat between
+    /// pages.
     static let maxReplayedImages = 4
 
     struct Prepared {
@@ -54,6 +59,8 @@ enum VisionPromptBuilder {
         let images: [Data]
         /// How many older turns were dropped to make the prompt fit.
         let droppedTurns: Int
+        /// Whether the first user turn was among them.
+        var firstUserTurnDropped = false
     }
 
     static func build(
@@ -65,7 +72,8 @@ enum VisionPromptBuilder {
         // prompt that will actually be built, or it trims history to make
         // room for images this prompt is not going to send.
         let capped = capMedia(turns: turns, limit: maxReplayedImages)
-        let (kept, dropped) = fit(turns: capped, budgetTokens: budgetTokens)
+        let fitted = fitDetailed(turns: capped, budgetTokens: budgetTokens)
+        let kept = fitted.kept
 
         var withMarkers: [ChatTurn] = []
         var images: [Data] = []
@@ -112,7 +120,8 @@ enum VisionPromptBuilder {
             prompt: PromptFormatter.format(turns: withMarkers, family: family),
             turns: withMarkers,
             images: images,
-            droppedTurns: dropped
+            droppedTurns: fitted.droppedTurns,
+            firstUserTurnDropped: !fitted.firstUserTurnIntact
         )
     }
 
@@ -162,31 +171,27 @@ enum VisionPromptBuilder {
         family == .ernie
     }
 
-    /// Drops the oldest history until the estimate fits `budgetTokens`.
+    /// Drops older exchanges until the estimate fits `budgetTokens`, by the
+    /// rules both llama.cpp engines share (`HistoryTrim`): whole exchanges,
+    /// oldest first, in batches of about a quarter of the budget so the KV
+    /// prefix cache keeps hitting for the next turns, and the first
+    /// exchange kept while it is small.
     ///
     /// The system turn (the model's instructions) and the last turn (the
-    /// question being asked) are never dropped - if those two alone do not
-    /// fit, the prompt is handed over as-is and llama.cpp reports a window
-    /// it cannot serve, which is a truthful error rather than a silently
+    /// question being asked) are never dropped - if those alone do not fit,
+    /// the prompt is handed over as-is and llama.cpp reports a window it
+    /// cannot serve, which is a truthful error rather than a silently
     /// mangled conversation.
     static func fit(
         turns: [ChatTurn],
         budgetTokens: Int
     ) -> (kept: [ChatTurn], dropped: Int) {
-        guard budgetTokens > 0 else { return (turns, 0) }
-        var kept = turns
-        var total = kept.reduce(0) { $0 + estimatedTokens(of: $1) }
-        var dropped = 0
+        let fitted = fitDetailed(turns: turns, budgetTokens: budgetTokens)
+        return (fitted.kept, fitted.droppedTurns)
+    }
 
-        while total > budgetTokens {
-            guard let index = kept.indices.first(where: {
-                kept[$0].role != .system && $0 < kept.count - 1
-            }) else { break }
-            total -= estimatedTokens(of: kept[index])
-            kept.remove(at: index)
-            dropped += 1
-        }
-        return (kept, dropped)
+    static func fitDetailed(turns: [ChatTurn], budgetTokens: Int) -> HistoryTrim.Fit {
+        HistoryTrim.fitEstimated(turns: turns, room: budgetTokens, cost: estimatedTokens(of:))
     }
 
     /// Rough token cost of one turn. Deliberately pessimistic: over-counting

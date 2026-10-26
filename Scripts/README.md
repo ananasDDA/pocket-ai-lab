@@ -150,3 +150,23 @@ Needs network access and nothing else — no third-party packages. Sampling is
 seeded (`SEED` in the script), so the same dataset revisions always produce
 the same task set. Dataset attribution lives in
 [BENCHMARK_DATA_LICENSES.md](../BENCHMARK_DATA_LICENSES.md).
+
+## Daily-use device suite: `daily_use_night.sh`, `daily_use_extract.py`, `daily_use_rubric.txt`
+
+`local_ai_testTests/Device/DailyUseDeviceTests.swift` runs one model through
+realistic chat scenarios on the iPhone and logs every prompt and answer.
+
+```bash
+Scripts/daily_use_night.sh                     # default model list, one run per model
+Scripts/daily_use_night.sh --ab                # + no-system-prompt runs of two models
+Scripts/daily_use_night.sh --sampling authors  # model authors' sampling (DAILY_SAMPLING)
+Scripts/daily_use_night.sh --dry-run           # print the commands only
+Scripts/daily_use_night.sh LiquidAI/LFM2-1.2B-GGUF --scenarios doc_qa,format_follow
+python3 Scripts/daily_use_extract.py run.log --out DIR [--combined]
+```
+
+The night script builds once, then runs each model in its own
+`xcodebuild test-without-building` under the shared phone lock
+(`$PAL_PHONE_LOCK`, default `/tmp/pal-phone.lock`), pauses 3 minutes between models, splits
+each log with `daily_use_extract.py` and ends with one combined table.
+`daily_use_rubric.txt` is how a reader grades the transcripts.

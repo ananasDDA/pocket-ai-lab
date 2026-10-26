@@ -35,6 +35,10 @@ struct ImportModelSheet: View {
     @State private var showFileImporter = false
     @State private var pendingReplace: PendingLocalImport?
     @State private var showReplacePrompt = false
+    /// A picked file that fits, but above the comfort margin, held until the
+    /// user confirms. Carries the explanation shown in the prompt.
+    @State private var pendingTight: PendingLocalImport?
+    @State private var showTightPrompt = false
     /// Descriptor of the file currently being copied in, used to read the
     /// copy's progress back out of the downloader.
     @State private var importingModel: AIModel?
@@ -52,6 +56,7 @@ struct ImportModelSheet: View {
     private struct PendingLocalImport {
         let candidate: LocalGGUFCandidate
         let url: URL
+        var message: String = ""
     }
 
     /// `.gguf` has no registered UTI, so the extension-derived type is used
@@ -106,6 +111,19 @@ struct ImportModelSheet: View {
             } message: { pending in
                 Text("\(pending.candidate.filename) is already imported. Replacing it "
                      + "overwrites the copy that is on the device now.")
+            }
+            .alert(
+                "Close to the memory limit",
+                isPresented: $showTightPrompt,
+                presenting: pendingTight
+            ) { pending in
+                Button("Cancel", role: .cancel) { pendingTight = nil }
+                Button("Import anyway") {
+                    pendingTight = nil
+                    Task { await continueLocalImport(candidate: pending.candidate, url: pending.url) }
+                }
+            } message: { pending in
+                Text(pending.message)
             }
         }
     }
@@ -220,6 +238,14 @@ struct ImportModelSheet: View {
     private func analyzedStep(_ result: ImportAnalysis) -> some View {
         let format = selectedFormat ?? result.detected
         let estimate = estimate(for: result, format: format)
+        let currentQuant = isGGUF(format) ? (selectedQuant ?? result.defaultQuant) : nil
+        let decision = ImportFit.decide(
+            analysis: result,
+            format: format,
+            quant: currentQuant,
+            budgetGB: estimate.usableRAMGB,
+            deviceName: device.marketingName
+        )
 
         Form {
             Section {
@@ -263,8 +289,7 @@ struct ImportModelSheet: View {
                         set: { selectedQuant = $0 }
                     )) {
                         ForEach(result.ggufQuants) { quant in
-                            Text("\(quant.label) · \(formatGB(Double(quant.size) / ImportAnalyzer.bytesPerGB))")
-                                .tag(quant)
+                            Text(quantTitle(quant)).tag(quant)
                         }
                     }
                 }
@@ -281,13 +306,15 @@ struct ImportModelSheet: View {
             }
 
             Section("Fit on this \(device.marketingName)") {
-                verdictRow(
-                    title: "RAM",
-                    detail: "\(formatGB(estimate.ramGB)) needed · "
-                        + "\(formatGB(max(estimate.usableRAMGB, 0))) usable",
-                    color: verdictColor(estimate.ramVerdict),
-                    symbol: verdictSymbol(estimate.ramVerdict)
-                )
+                if decision.problem.map(isMemoryProblem) ?? true {
+                    verdictRow(
+                        title: "RAM",
+                        detail: "\(formatGB(estimate.ramGB)) needed · "
+                            + "\(formatGB(max(estimate.usableRAMGB, 0))) usable",
+                        color: verdictColor(estimate.ramVerdict),
+                        symbol: verdictSymbol(estimate.ramVerdict)
+                    )
+                }
                 verdictRow(
                     title: "Disk",
                     detail: "\(formatGB(estimate.diskGB)) download · "
@@ -295,11 +322,23 @@ struct ImportModelSheet: View {
                     color: estimate.diskFits ? .green : .red,
                     symbol: estimate.diskFits ? "checkmark.circle.fill" : "xmark.circle.fill"
                 )
-                if estimate.ramVerdict == .tight {
-                    Text("Close to the limit — expect slow first loads and possible "
-                         + "termination if other apps are running.")
+                if let quant = currentQuant, quant.isSplit, quant.isComplete {
+                    Text("Split into \(quant.expectedParts) files. All of them are downloaded "
+                         + "and loaded together.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                if let message = decision.message {
+                    Label(message, systemImage: decision.blocksDownload
+                          ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(decision.blocksDownload ? .red : .orange)
+                }
+                if let alternative = decision.alternative, isGGUF(format) {
+                    Button("Use \(alternative.label) instead") {
+                        selectedQuant = alternative
+                    }
+                    .font(.subheadline)
                 }
             }
 
@@ -316,7 +355,7 @@ struct ImportModelSheet: View {
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isStartingDownload || estimate.ramVerdict == .wontFit
+                .disabled(isStartingDownload || decision.blocksDownload
                           || !estimate.diskFits || blocksDownload(format))
 
                 if blocksDownload(format) {
@@ -324,8 +363,8 @@ struct ImportModelSheet: View {
                          + "Nothing is downloaded.")
                         .font(.caption)
                         .foregroundStyle(.red)
-                } else if estimate.ramVerdict == .wontFit {
-                    Text("This model needs more RAM than the device can give it.")
+                } else if decision.blocksDownload {
+                    Text("This cannot run on this device as selected, so nothing is downloaded.")
                         .font(.caption)
                         .foregroundStyle(.red)
                 } else if !estimate.diskFits {
@@ -385,7 +424,13 @@ struct ImportModelSheet: View {
         do {
             let info = try await HuggingFaceAPI.fetchRepoInfo(repo: repo)
             guard !info.isPrivate else { throw HuggingFaceError.restricted(repo) }
-            let analysis = try ImportAnalyzer.analyze(info)
+            var analysis = try ImportAnalyzer.analyze(info)
+            // Like the MLX check below: known before the Download button
+            // shows, so an architecture llama.cpp cannot run is refused
+            // instead of downloaded.
+            if analysis.formats.contains(where: { isGGUF($0) }) {
+                analysis.ggufArchitecture = await HuggingFaceAPI.fetchGGUFArchitecture(repo: repo)
+            }
             // Resolved while the sheet is still on the "checking" screen, so
             // the verdict is already in hand when the Download button first
             // appears and cannot be beaten to it by a fast tap.
@@ -449,6 +494,33 @@ struct ImportModelSheet: View {
             return
         }
 
+        // Judged before anything is copied, by the same rules as the Hugging
+        // Face path: refuse what cannot load, ask about what is tight.
+        let decision = ImportFit.decideLocal(
+            fileSizeBytes: candidate.fileSizeBytes,
+            budgetGB: device.budgetGB(for: .llamaCpp),
+            deviceName: device.marketingName
+        )
+        switch decision.kind {
+        case .refuse:
+            errorMessage = LocalImportError.tooLarge(decision.message ?? "").localizedDescription
+            return
+        case .tight:
+            pendingTight = PendingLocalImport(
+                candidate: candidate, url: url, message: decision.message ?? ""
+            )
+            showTightPrompt = true
+            return
+        case .fits:
+            break
+        }
+
+        await continueLocalImport(candidate: candidate, url: url)
+    }
+
+    /// The part of the local import after the memory check: the duplicate
+    /// prompt, then the copy.
+    private func continueLocalImport(candidate: LocalGGUFCandidate, url: URL) async {
         if InstalledModelsStore.shared.knownModel(id: candidate.modelID) != nil {
             pendingReplace = PendingLocalImport(candidate: candidate, url: url)
             showReplacePrompt = true
@@ -482,11 +554,15 @@ struct ImportModelSheet: View {
                 .localizedDescription
             return
         }
-        // Mirrors the Hugging Face path's Download-button gate: a GGUF that
-        // fits on disk but not in RAM would import fine and then fail every
-        // load preflight, leaving the user with a model that can never run.
+        // The memory decision was made (and a tight fit confirmed) in
+        // `prepareLocalImport`; this re-check only guards the path in case
+        // the device's budget reading changed in between.
         guard estimate.ramVerdict != .wontFit else {
-            errorMessage = "This model needs more RAM than this device can give it."
+            errorMessage = ImportFit.decideLocal(
+                fileSizeBytes: candidate.fileSizeBytes,
+                budgetGB: estimate.usableRAMGB,
+                deviceName: device.marketingName
+            ).message
             return
         }
 
@@ -526,6 +602,27 @@ struct ImportModelSheet: View {
             device: device,
             freeDiskBytes: device.freeDiskSpace
         )
+    }
+
+    /// "Q8_0 · 28.6 GB · 3 parts", with incomplete split sets marked.
+    private func quantTitle(_ quant: GGUFQuantOption) -> String {
+        var title = "\(quant.label) · \(formatGB(Double(quant.size) / ImportAnalyzer.bytesPerGB))"
+        if quant.isSplit {
+            title += quant.isComplete
+                ? " · \(quant.expectedParts) parts"
+                : " · incomplete (\(quant.parts.count) of \(quant.expectedParts) parts)"
+        }
+        return title
+    }
+
+    /// Memory problems keep the RAM row; file-selection problems (projector
+    /// only, missing parts, architecture) replace it, since a RAM figure for
+    /// something that cannot load at all would only confuse.
+    private func isMemoryProblem(_ problem: ImportDecision.Problem) -> Bool {
+        switch problem {
+        case .tooLarge, .tight: return true
+        default: return false
+        }
     }
 
     private func isGGUF(_ format: ImportFormat) -> Bool {

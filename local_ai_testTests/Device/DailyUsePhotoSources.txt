@@ -1,0 +1,16 @@
+Photos used by the vision_photo_real scenario of DailyUseDeviceTests.
+Both are CC0 (public domain dedication) on Wikimedia Commons. They were
+downloaded as the Commons 960 px thumbnails and re-encoded at 896 px on the
+long side (the chat's own downscale size); nothing else was changed.
+
+DailyUseStreet.jpg
+  Title:   Street scene at SW corner of Upper Kirby
+  Page:    https://commons.wikimedia.org/wiki/File:Street_scene_at_SW_corner_of_Upper_Kirby.jpg
+  Author:  WhisperToMe (own work), taken 2021-03-05
+  Licence: CC0 1.0 Universal, https://creativecommons.org/publicdomain/zero/1.0/
+
+DailyUseFood.jpg
+  Title:   Plate of food with matooke, groundnuts, chicken and chapati
+  Page:    https://commons.wikimedia.org/wiki/File:Plate_of_food_with_matooke,_groundnuts,_chicken_and_chapati.jpg
+  Author:  Samson Ssemakadde (own work), taken 2026-01-31
+  Licence: CC0 1.0 Universal, https://creativecommons.org/publicdomain/zero/1.0/

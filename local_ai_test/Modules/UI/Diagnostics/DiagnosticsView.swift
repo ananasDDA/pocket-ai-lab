@@ -18,6 +18,7 @@ struct DiagnosticsView: View {
     @State private var exportJSON = ""
     @State private var showingExport = false
     @State private var showErrorDetail = false
+    @State private var reportContext: ProblemReportContext?
     /// Owns the "Model Benchmark" section's selection, run lifecycle, and
     /// every sheet/cover/alert it can present. Kept here (rather than on
     /// `BenchmarkSection` itself) so all of that presentation attaches to
@@ -40,6 +41,14 @@ struct DiagnosticsView: View {
                 BenchmarkSection(model: benchmarkModel)
 
                 BuildTestSection(model: buildTestModel)
+
+                Section {
+                    Button("Report a problem", systemImage: "envelope") {
+                        reportContext = .current()
+                    }
+                } footer: {
+                    Text("Opens your mail app with a report you can review before sending.")
+                }
 
                 Section("Available memory") {
                     Text("\(InferenceManager.availableMemoryMB()) MB")
@@ -111,6 +120,9 @@ struct DiagnosticsView: View {
                 }
             }
             .navigationTitle("Testing")
+            .sheet(item: $reportContext) { context in
+                ReportProblemView(context: context)
+            }
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: BenchmarkReport.self) { report in
                 BenchmarkReportView(report: report)

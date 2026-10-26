@@ -25,6 +25,16 @@ nonisolated struct GGUFHeader: Sendable, Equatable {
     /// Quantization read from `general.file_type`, e.g. "Q4_K_M". nil when the
     /// key is missing or carries a value this build does not know.
     let fileTypeLabel: String?
+    /// `general.type`: "model" for weights, "adapter" for a LoRA, "imatrix"
+    /// for an importance matrix. Older converters do not write it.
+    var fileKind: String? = nil
+    /// `split.no` (0-based) and `split.count` from `gguf-split`. Present only
+    /// in the parts of a split model.
+    var splitIndex: Int? = nil
+    var splitCount: Int? = nil
+
+    /// True for one part of a model `gguf-split` cut into several files.
+    var isSplitPart: Bool { (splitCount ?? 1) > 1 }
 }
 
 // MARK: - Reader
@@ -78,6 +88,9 @@ nonisolated enum GGUFHeaderReader {
         var architecture: String?
         var name: String?
         var fileType: UInt32?
+        var fileKind: String?
+        var splitIndex: Int?
+        var splitCount: Int?
 
         // A partially-walked block is still useful: converters write the
         // `general.*` keys first, so the interesting ones land well before
@@ -106,11 +119,18 @@ nonisolated enum GGUFHeaderReader {
                 // real value is a small positive.
                 case ("general.file_type", .uint32), ("general.file_type", .int32):
                     fileType = try cursor.readUInt32()
+                case ("general.type", .string):
+                    fileKind = try cursor.readString(wide: wide)
+                // gguf-split writes these as uint16, appended after every
+                // other key of the first part - which is why the walk no
+                // longer stops once the `general.*` keys are in hand.
+                case ("split.no", _) where type.isInteger:
+                    splitIndex = try readInteger(type, from: &cursor)
+                case ("split.count", _) where type.isInteger:
+                    splitCount = try readInteger(type, from: &cursor)
                 default:
                     try skipValue(type, in: &cursor, wide: wide)
                 }
-
-                if architecture != nil, name != nil, fileType != nil { break }
             }
         } catch {
             // Truncated or malformed metadata. Keep whatever was collected.
@@ -120,8 +140,20 @@ nonisolated enum GGUFHeaderReader {
             version: version,
             architecture: architecture,
             name: name,
-            fileTypeLabel: fileType.flatMap { fileTypeLabels[$0] }
+            fileTypeLabel: fileType.flatMap { fileTypeLabels[$0] },
+            fileKind: fileKind,
+            splitIndex: splitIndex,
+            splitCount: splitCount
         )
+    }
+
+    /// A little-endian integer of any fixed width, as Int.
+    private static func readInteger(_ type: GGUFValueType, from cursor: inout ByteCursor) throws -> Int? {
+        guard let width = type.fixedWidth else { return nil }
+        let bytes = try cursor.read(width)
+        var value: UInt64 = 0
+        for byte in bytes.reversed() { value = value << 8 | UInt64(byte) }
+        return value <= UInt64(Int.max) ? Int(value) : nil
     }
 
     /// Nesting only grows through arrays-of-arrays; a hostile file can chain
@@ -191,6 +223,13 @@ nonisolated private enum GGUFValueType: UInt32 {
         case .uint32, .int32, .float32: return 4
         case .uint64, .int64, .float64: return 8
         case .string, .array:           return nil
+        }
+    }
+
+    var isInteger: Bool {
+        switch self {
+        case .uint8, .int8, .uint16, .int16, .uint32, .int32, .uint64, .int64: return true
+        default: return false
         }
     }
 }

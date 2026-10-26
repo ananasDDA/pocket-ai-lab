@@ -581,6 +581,16 @@ final class ModelDownloader: NSObject {
         }?.key
     }
 
+    /// `chosen` plus, when it is part of a split model, every other part of
+    /// the same set. llama.cpp is handed part 1 and opens the rest itself
+    /// from the same directory, so a split model is only usable with all of
+    /// them on disk.
+    nonisolated static func withSplitParts(_ chosen: HFFile, in files: [HFFile]) -> [HFFile] {
+        let names = GGUFNaming.splitSiblings(of: chosen.rfilename, in: files.map(\.rfilename))
+        guard names.count > 1 else { return [chosen] }
+        return names.compactMap { name in files.first { $0.rfilename == name } }
+    }
+
     /// Not private: `DownloaderFilterTests` drives this directly. Pure over
     /// its inputs, so it needs no downloader state.
     nonisolated static func filterFiles(_ files: [HFFile], for model: AIModel) throws -> [HFFile] {
@@ -600,11 +610,11 @@ final class ModelDownloader: NSObject {
             var result: [HFFile] = []
             if let preferred = model.preferredGGUFFilename,
                let chosen = files.first(where: { $0.rfilename == preferred }) {
-                result.append(chosen)
+                result += Self.withSplitParts(chosen, in: files)
             } else if let firstGGUF = base.first(where: {
                 GGUFNaming.isWeights($0.rfilename)
             }) {
-                result.append(firstGGUF)
+                result += Self.withSplitParts(firstGGUF, in: files)
             }
             result += base.filter { f in
                 f.rfilename.hasSuffix("tokenizer.json") ||
@@ -617,7 +627,7 @@ final class ModelDownloader: NSObject {
             var result: [HFFile] = []
             if let preferred = model.preferredGGUFFilename,
                let chosen = files.first(where: { $0.rfilename == preferred }) {
-                result.append(chosen)
+                result += Self.withSplitParts(chosen, in: files)
             }
             if let mmprojName = model.mmprojFilename,
                let chosen = files.first(where: { $0.rfilename == mmprojName }) {

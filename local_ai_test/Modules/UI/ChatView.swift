@@ -29,12 +29,15 @@ struct ChatView: View {
     @State private var showAttachmentFileImporter = false
     @State private var showDiagnostics = false
     @State private var showErrorDetail = false
+    @State private var reportContext: ProblemReportContext?
     @State private var showSpeakInfo = false
     @State private var showKokoroMissing = false
     @State private var showLiveMetrics = false
     @State private var showChatTemplate = false
+    @State private var showSystemPrompt = false
+    @State private var showThermalInfo = false
     /// Non-nil while the transcript of one message is on screen.
-    @State private var inspectedPrompt: RenderedPrompt?
+    @State private var inspected: InspectedMessage?
     @Bindable private var liveMetrics = LiveDeviceMetrics.shared
     @AppStorage("chatDisplayStyle") private var chatStyleRaw: String = ChatDisplayStyle.bubble.rawValue
     @Bindable private var recorder = AudioRecorder.shared
@@ -66,6 +69,9 @@ struct ChatView: View {
             VStack(spacing: 0) {
                 if case .error(let message) = vm.inferenceState {
                     errorBanner(message)
+                }
+                if let advice = vm.thermalAdvice {
+                    thermalBanner(advice)
                 }
                 messageList
                 if vm.currentCapabilities.contains(.audioIn) {
@@ -111,8 +117,24 @@ struct ChatView: View {
         .sheet(isPresented: $showChatTemplate) {
             ChatTemplateSheet(model: vm.selectedModel)
         }
-        .sheet(item: $inspectedPrompt) { prompt in
-            PromptInspectorSheet(prompt: prompt)
+        .sheet(isPresented: $showSystemPrompt) {
+            SystemPromptSheet()
+        }
+        .alert("Phone is hot", isPresented: $showThermalInfo, presenting: vm.thermalAdvice) { advice in
+            if let lighter = advice.lighterModel {
+                Button("Switch to \(lighter.name)") { vm.selectModel(lighter) }
+            }
+            Button("OK", role: .cancel) { }
+        } message: { advice in
+            if let lighter = advice.lighterModel {
+                Text(ThermalAdvice.explanation
+                     + " \(lighter.name) is installed and lighter. Switching starts a new chat.")
+            } else {
+                Text(ThermalAdvice.explanation)
+            }
+        }
+        .sheet(item: $inspected) { item in
+            PromptInspectorSheet(prompt: item.prompt, attachments: item.attachments)
         }
         .sheet(isPresented: $showSpeakInfo) {
             SpeakResponseInfoSheet(isPresented: $showSpeakInfo)
@@ -126,6 +148,9 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showDiagnostics, onDismiss: { onDiagnosticsDismiss?() }) {
             DiagnosticsView()
+        }
+        .sheet(item: $reportContext) { context in
+            ReportProblemView(context: context, category: .chat)
         }
         .sheet(isPresented: $showErrorDetail) {
             if let failure = InferenceManager.shared.lastError {
@@ -225,7 +250,7 @@ struct ChatView: View {
     // MARK: - Options menu
 
     /// Top-right ellipsis menu. Order is deliberate:
-    ///  1. Chat template (what the model is actually being sent)
+    ///  1. Chat template and system prompt (what the model is actually being sent)
     ///  2. Speak response (with an "About" help pane)
     ///  3. Chat style (bubbles / markdown document / raw)
     ///  4. Testing (self-tests & benchmarks — formerly "Diagnostics")
@@ -240,6 +265,11 @@ struct ChatView: View {
                     showChatTemplate = true
                 } label: {
                     Label("Chat template", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
+                Button {
+                    showSystemPrompt = true
+                } label: {
+                    Label("System prompt", systemImage: "text.quote")
                 }
             }
 
@@ -285,6 +315,11 @@ struct ChatView: View {
                     showDiagnostics = true
                 } label: {
                     Label("Testing", systemImage: "testtube.2")
+                }
+                Button {
+                    reportContext = .current(model: vm.selectedModel)
+                } label: {
+                    Label("Report a problem", systemImage: "envelope")
                 }
             }
 
@@ -349,6 +384,34 @@ struct ChatView: View {
             .background(Color.red.opacity(0.1))
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Thermal banner
+
+    /// Same slim strip as the error banner, in a calm orange: a hot phone is
+    /// not an error, it only explains why tokens arrive slower. Tapping it
+    /// says why and, for a heavy model, offers a lighter installed one.
+    private func thermalBanner(_ advice: ThermalAdvice) -> some View {
+        Button {
+            showThermalInfo = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "thermometer.medium")
+                Text(advice.lighterModel == nil
+                     ? "Phone is hot, replies are slower"
+                     : "Phone is hot, a lighter model would be faster")
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "info.circle")
+            }
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Color.orange.opacity(0.1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Phone is hot, replies are slower. Show details.")
     }
 
     // MARK: - Model selector (toolbar center)
@@ -492,9 +555,16 @@ struct ChatView: View {
                         emptyState
                     } else {
                         ForEach(vm.messages) { msg in
-                            MessageRowView(message: msg, style: chatStyle) { prompt in
-                                inspectedPrompt = prompt
-                            }
+                            MessageRowView(
+                                message: msg,
+                                style: chatStyle,
+                                onInspect: { prompt in
+                                    inspected = InspectedMessage(prompt: prompt, attachments: msg.attachments)
+                                },
+                                onContinue: msg.id == vm.messages.last?.id && !vm.isGenerating
+                                    ? { vm.continueReply() }
+                                    : nil
+                            )
                                 .id(msg.id)
                         }
                         if vm.isGenerating, let last = vm.messages.last, last.text.isEmpty {
@@ -740,21 +810,47 @@ private struct MessageRowView: View {
     /// that message produced. nil for messages sent before the engine
     /// started reporting it.
     var onInspect: ((RenderedPrompt) -> Void)?
+    /// Set only for the newest message while nothing is generating; shown
+    /// only when that message stopped at the reply's token cap.
+    var onContinue: (() -> Void)?
 
     var body: some View {
-        Group {
-            switch style {
-            case .bubble:    bubbleLayout
-            case .document:  documentLayout
-            case .raw:       rawLayout
+        VStack(alignment: .leading, spacing: 6) {
+            Group {
+                switch style {
+                case .bubble:    bubbleLayout
+                case .document:  documentLayout
+                case .raw:       rawLayout
+                }
+            }
+            // Only user turns carry a prompt: the tap target is exactly the
+            // messages there is something to show for.
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let prompt = message.sentPrompt { onInspect?(prompt) }
+            }
+            if message.stoppedAtLimit, let onContinue {
+                continueRow(onContinue)
             }
         }
-        // Only user turns carry a prompt: the tap target is exactly the
-        // messages there is something to show for.
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if let prompt = message.sentPrompt { onInspect?(prompt) }
+    }
+
+    /// Under a reply that ran into the token cap: says so in a footnote and
+    /// offers to carry on, so a cut sentence does not look like a crash.
+    private func continueRow(_ action: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Text("Stopped at the reply length limit.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button(action: action) {
+                Label("Continue", systemImage: "arrow.down.forward")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .controlSize(.mini)
         }
+        .padding(.leading, style == .bubble ? 4 : 0)
     }
 
     // MARK: - Raw layout
@@ -969,7 +1065,15 @@ private struct CodeBlockView: View {
     }
 }
 
-private struct AttachmentPreviewStrip: View {
+/// What the prompt inspector opens with: the transcript a message produced
+/// and the attachments that went with it, shown above the text.
+struct InspectedMessage: Identifiable {
+    let prompt: RenderedPrompt
+    let attachments: [ChatAttachment]
+    var id: String { prompt.id }
+}
+
+struct AttachmentPreviewStrip: View {
     let attachments: [ChatAttachment]
     /// User-sent media should hug the right edge like the blue bubble; a bare
     /// `ScrollView` expands to full width and lays out its `HStack` from the
@@ -1157,7 +1261,7 @@ private struct ModelPickerSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if vm.installedModels.isEmpty {
+                if vm.chatModels.isEmpty {
                     noModelsView
                 } else {
                     modelList
@@ -1185,7 +1289,7 @@ private struct ModelPickerSheet: View {
     private var modelList: some View {
         List {
             Section("Installed") {
-                ForEach(vm.installedModels) { model in
+                ForEach(vm.chatModels) { model in
                     Button {
                         if model.backend.isLinked {
                             vm.selectModel(model)

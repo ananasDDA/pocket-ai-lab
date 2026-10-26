@@ -132,7 +132,8 @@ final class CoreMLTextEngine: InferenceEngine, @unchecked Sendable {
                 }
                 do {
                     let contextLimit = max(model.maxContextLength, 1)
-                    var tokens = Self.promptTokens(turns: turns, tokenizer: tokenizer, modelId: self.modelId)
+                    let prompt = Self.promptTokens(turns: turns, tokenizer: tokenizer, modelId: self.modelId)
+                    var tokens = prompt.tokens
                     guard !tokens.isEmpty else {
                         throw InferenceError.generationFailed("Prompt tokenized to zero tokens.")
                     }
@@ -146,6 +147,13 @@ final class CoreMLTextEngine: InferenceEngine, @unchecked Sendable {
                         bosTokenId: tokenizer.bosTokenId
                     )
                     let promptTokenCount = tokens.count
+                    // What the model reads after trimming, decoded back to
+                    // text with its special tokens, for the prompt inspector.
+                    continuation.yield(.diagnostic(.promptRendered(RenderedPrompt(
+                        text: tokenizer.decode(tokens: tokens, skipSpecialTokens: false),
+                        source: prompt.source,
+                        template: nil
+                    ))))
                     let budget = min(parameters.maxTokens, contextLimit - promptTokenCount)
                     guard budget > 0 else {
                         throw InferenceError.generationFailed(
@@ -269,9 +277,7 @@ final class CoreMLTextEngine: InferenceEngine, @unchecked Sendable {
         maxNewTokens: Int,
         bosTokenId: Int?
     ) -> [Int] {
-        let limit = max(contextLimit, 1)
-        let reserved = max(1, min(maxNewTokens, limit / 2))
-        let keep = max(1, limit - reserved)
+        let keep = ContextBudget.promptRoom(maxTokens: maxNewTokens, contextSize: contextLimit)
         guard tokens.count > keep else { return tokens }
 
         if let bos = bosTokenId, tokens.first == bos, keep > 1 {
@@ -288,21 +294,34 @@ final class CoreMLTextEngine: InferenceEngine, @unchecked Sendable {
     ///
     /// swift-transformers 1.0.0 returns token *ids* from `applyChatTemplate`,
     /// not a rendered string, so the two paths converge on `[Int]`.
+    ///
+    /// A template that refuses a system role (Gemma's raise "System role not
+    /// supported") gets a second try with the system turn folded into the
+    /// first user turn before the family fallback is used.
     private static func promptTokens(
         turns: [ChatTurn],
         tokenizer: any Tokenizer,
         modelId: String
-    ) -> [Int] {
+    ) -> (tokens: [Int], source: ChatTemplateSource) {
         if tokenizer.hasChatTemplate {
-            let messages: [Tokenizers.Message] = turns.map {
-                ["role": $0.role.rawValue, "content": $0.content]
+            var attempts = [turns]
+            if turns.contains(where: { $0.role == .system }) {
+                attempts.append(SystemPrompt.foldedIntoFirstUser(turns))
             }
-            if let ids = try? tokenizer.applyChatTemplate(messages: messages), !ids.isEmpty {
-                return ids
+            for attempt in attempts {
+                let messages: [Tokenizers.Message] = attempt.map {
+                    ["role": $0.role.rawValue, "content": $0.content]
+                }
+                if let ids = try? tokenizer.applyChatTemplate(messages: messages), !ids.isEmpty {
+                    return (ids, .model)
+                }
             }
         }
         let family = PromptFormatter.detectFamily(modelId: modelId)
-        return tokenizer.encode(text: PromptFormatter.format(turns: turns, family: family))
+        return (
+            tokenizer.encode(text: PromptFormatter.format(turns: turns, family: family)),
+            .fallback(family)
+        )
     }
 
     // MARK: - Cancellation shield
@@ -404,6 +423,10 @@ final class CoreMLTextEngine: InferenceEngine, @unchecked Sendable {
 /// hands the callback the decoded prompt *plus* completion on every step. We
 /// therefore drive `predictNextTokenScores` ourselves and sample here, which
 /// also lets `GenerationParameters.seed` make a run reproducible.
+///
+/// Applies temperature, topK, topP and the repetition penalty. `minP` and
+/// `presencePenalty` (per-model catalog sampling) are not implemented here
+/// and are ignored.
 private struct TokenSampler {
     private let temperature: Float
     private let topK: Int

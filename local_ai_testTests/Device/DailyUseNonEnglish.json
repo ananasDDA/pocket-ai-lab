@@ -1,0 +1,29 @@
+{
+  "_comment": "Test data for the non_english_chat scenario of DailyUseDeviceTests. The prompts are deliberately not in English: the scenario checks that a model answers in the language it is asked in. Each chat runs in a fresh conversation; every answer must be in `language` (ISO 639-1, as DailyUseChecks.detectLanguage reports it).",
+  "chats": [
+    {
+      "language": "es",
+      "name": "spanish",
+      "turns": [
+        "Hola, ¿me puedes recomendar tres ideas para una cena rápida y saludable entre semana?",
+        "¿Y cuál de las tres es la más barata?"
+      ]
+    },
+    {
+      "language": "de",
+      "name": "german",
+      "turns": [
+        "Hallo! Ich möchte morgens mehr Energie haben. Hast du drei einfache Tipps für mich?",
+        "Welcher Tipp ist am wichtigsten, wenn ich nur einen ausprobieren kann?"
+      ]
+    },
+    {
+      "language": "ja",
+      "name": "japanese",
+      "turns": [
+        "こんにちは。雨の週末に家でできる楽しいことを三つ教えてください。",
+        "その中で一番お金がかからないのはどれですか？"
+      ]
+    }
+  ]
+}

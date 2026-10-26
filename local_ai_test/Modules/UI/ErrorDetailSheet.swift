@@ -14,6 +14,7 @@ struct ErrorDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
     @State private var showShare = false
+    @State private var reportContext: ProblemReportContext?
 
     var body: some View {
         NavigationStack {
@@ -52,6 +53,14 @@ struct ErrorDetailSheet: View {
                                     .fill(Color(.secondarySystemBackground))
                             )
                     }
+
+                    Button {
+                        reportContext = .current(failure: failure)
+                    } label: {
+                        Label("Report this problem", systemImage: "envelope")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
                 }
                 .padding(16)
             }
@@ -93,6 +102,9 @@ struct ErrorDetailSheet: View {
             }
             .sheet(isPresented: $showShare) {
                 ShareSheet(items: [failure.exportText])
+            }
+            .sheet(item: $reportContext) { context in
+                ReportProblemView(context: context, category: failure.phase == .generate ? .chat : nil)
             }
         }
     }

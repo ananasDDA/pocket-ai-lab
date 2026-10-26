@@ -116,9 +116,10 @@ nonisolated struct BuildTestOptions: Codable, Sendable, Hashable {
     /// does not turn off the `thermallyConstrained` flag on the results.
     var thermalGating: Bool
 
-    /// Wait between models for a device at `serious` or hotter to cool back
-    /// to `fair`. Separate from `thermalGating` so a quick smoke sweep can
-    /// keep the engine's own gate and drop only the long between-model wait.
+    /// Run the thermal half of the conditions gate before each model (cool
+    /// to the target of `conditionsPolicy`). Separate from `thermalGating`
+    /// so a quick smoke sweep can keep the engine's own gate and drop only
+    /// the long between-model wait. The power half does not depend on it.
     var cooldownBetweenModels: Bool
 
     /// Quality-stage time budget per model, in seconds. `nil` (the default)
@@ -128,6 +129,20 @@ nonisolated struct BuildTestOptions: Codable, Sendable, Hashable {
     /// so journals and reports written before it existed still decode.
     var qualityBudget: TimeInterval?
 
+    /// What the run waits for before each model: temperature, power,
+    /// network (`RunConditionsGate`). `nil` - the in-app run - means
+    /// `RunConditionsPolicy.interactive`; the Xcode harness sets the night
+    /// policy. Optional, like `qualityBudget`, so older journals decode.
+    var conditions: RunConditionsPolicy?
+
+    /// Run the models heaviest, lightest, second heaviest, ... by catalog
+    /// `ramRequiredGB`, so a light model gives the phone a break after a
+    /// heavy one. `nil` or false keeps catalog order.
+    var interleaveByWeight: Bool?
+
+    /// The policy in force.
+    var conditionsPolicy: RunConditionsPolicy { conditions ?? .interactive }
+
     init(
         stages: BenchmarkOptions.Stages = .full,
         modelIDs: [String] = [],
@@ -136,7 +151,9 @@ nonisolated struct BuildTestOptions: Codable, Sendable, Hashable {
         runStandardProtocol: Bool = true,
         thermalGating: Bool = true,
         cooldownBetweenModels: Bool = true,
-        qualityBudget: TimeInterval? = nil
+        qualityBudget: TimeInterval? = nil,
+        conditions: RunConditionsPolicy? = nil,
+        interleaveByWeight: Bool? = nil
     ) {
         self.stages = stages
         self.modelIDs = modelIDs
@@ -146,6 +163,8 @@ nonisolated struct BuildTestOptions: Codable, Sendable, Hashable {
         self.thermalGating = thermalGating
         self.cooldownBetweenModels = cooldownBetweenModels
         self.qualityBudget = BenchmarkOptions.sanitizedBudget(qualityBudget)
+        self.conditions = conditions
+        self.interleaveByWeight = interleaveByWeight
     }
 
     /// The release sweep.
@@ -175,6 +194,8 @@ nonisolated struct BuildTestOptions: Codable, Sendable, Hashable {
         if !thermalGating { parts.append("no thermal gate") }
         if !cooldownBetweenModels { parts.append("no cooldown") }
         if let qualityBudget { parts.append("quality budget: \(Int(qualityBudget)) s") }
+        if let conditions { parts.append("conditions: \(conditions.summaryLine)") }
+        if interleaveByWeight == true { parts.append("heavy/light interleaved") }
         return parts.joined(separator: ", ")
     }
 }
@@ -191,6 +212,12 @@ nonisolated enum BuildTestError: Error, LocalizedError, Sendable {
     case downloadFailed(String)
     /// The download did not reach `.installed` within the per-model budget.
     case downloadTimedOut(seconds: TimeInterval, lastState: String)
+    /// No byte arrived for `seconds` (`RunConditionsPolicy.downloadStallTimeout`).
+    case downloadStalled(seconds: TimeInterval, network: String)
+    /// The conditions gate ran out with the power still bad and
+    /// `RunConditionsPolicy.stopOnBadPower` set: this model and every later
+    /// one are skipped.
+    case runStopped(String)
 
     var errorDescription: String? {
         switch self {
@@ -201,6 +228,10 @@ nonisolated enum BuildTestError: Error, LocalizedError, Sendable {
         case .downloadTimedOut(let seconds, let lastState):
             return "download did not finish within \(Int(seconds)) s "
                 + "(last state: \(lastState))"
+        case .downloadStalled(let seconds, let network):
+            return "download stalled: no bytes for \(Int(seconds)) s (network \(network))"
+        case .runStopped(let detail):
+            return "run stopped: \(detail)"
         }
     }
 }
@@ -317,6 +348,10 @@ final class BuildTestRunner {
 
     /// When the current (or last) run started.
     private(set) var startedAt: Date?
+
+    /// Set when the conditions gate stopped the run (power still bad at the
+    /// cap). Every model from that one on is recorded as skipped with it.
+    private(set) var stopReason: String?
 
     /// Human-readable transcript, newest last. Every line here was also
     /// printed, which is how the Xcode wrapper gets its console output.
@@ -472,6 +507,7 @@ final class BuildTestRunner {
         completedEntries = []
         log = []
         lastReport = nil
+        stopReason = nil
         refreshThermalState()
 
         // MARK: Selection
@@ -513,6 +549,12 @@ final class BuildTestRunner {
             eligible = Array(eligible.prefix(cap))
         }
 
+        // After the cap, so the cap still picks the same models; only their
+        // order changes.
+        if options.interleaveByWeight == true, eligible.count > 2 {
+            eligible = RunOrdering.interleaveHeavyLight(eligible) { $0.ramRequiredGB }
+        }
+
         totalCount = eligible.count
 
         journal = BuildTestJournal(
@@ -535,6 +577,11 @@ final class BuildTestRunner {
         appendLog("[build-test] options: \(options.summaryLine)")
         appendLog("[build-test] eligible models: \(eligible.count), "
             + "pre-skipped: \(completedEntries.count)")
+        if options.interleaveByWeight == true {
+            appendLog("[build-test] order (heavy/light): " + eligible
+                .map { String(format: "%@ %.1f GB", $0.id, $0.ramRequiredGB) }
+                .joined(separator: ", "))
+        }
 
         // MARK: Reclaim
 
@@ -615,7 +662,17 @@ final class BuildTestRunner {
                 }
             }
 
+            let policy = options.conditionsPolicy
+
             do {
+                // A lost network path is waited out before the transfer
+                // starts rather than discovered by a stalled download.
+                if needsDownload, policy.downloadStallTimeout != nil {
+                    _ = try await RunConditionsWaiter.waitForNetwork(
+                        maxWait: policy.maxWait, log: { self.appendLog("  " + $0) }
+                    )
+                }
+
                 if needsDownload {
                     phase = .downloading
                     // `downloadAndWait` flips the flag and writes the on-disk
@@ -623,7 +680,11 @@ final class BuildTestRunner {
                     // be moving bytes - so a crash from there on still leaves
                     // proof that these files are ours, and a model that was
                     // simply already complete on disk is left alone.
-                    try await downloadAndWait(model, ownedByRunner: &ownedByRunner)
+                    try await downloadAndWait(
+                        model,
+                        ownedByRunner: &ownedByRunner,
+                        stallTimeout: policy.downloadStallTimeout
+                    )
                 } else if preInstalled {
                     if Self.isOwned(model) {
                         // Already installed AND still marked: a previous run
@@ -637,21 +698,41 @@ final class BuildTestRunner {
                     }
                 }
 
-                // Between-model cooldown, immediately before the measurement
-                // so a long download cannot re-warm the device after the
-                // wait. Not before the first model - the engine's own gate
-                // covers a run started hot.
-                if index > 0, options.thermalGating, options.cooldownBetweenModels {
+                // Conditions gate (cool-down + power), immediately before the
+                // measurement so a long download cannot re-warm the device
+                // after the wait. The in-app run skips the thermal half for
+                // the first model - the engine's own gate covers a run started
+                // hot; an unattended run (explicit policy) gates every model.
+                let checkThermal = options.thermalGating && options.cooldownBetweenModels
+                    && (index > 0 || options.conditions != nil)
+                var gate = RunConditionsOutcome.clear
+                if checkThermal || policy.powerGate {
                     phase = .coolingDown
-                    try await coolDownIfNeeded()
+                    gate = try await RunConditionsWaiter.wait(
+                        policy: policy,
+                        checkThermal: checkThermal,
+                        log: { self.appendLog("  " + $0) },
+                        onPoll: { self.refreshThermalState() }
+                    )
                 }
+
+                // The engine marks the run invalid if one of these holds while
+                // it measures; logging the state here puts the cause next to
+                // the number in the console.
+                appendLog("  [conditions] " + MeasurementConditions.logLine())
+
+                if gate.stop {
+                    throw BuildTestError.runStopped(gate.issues.joined(separator: "; "))
+                }
+                var benchmarkOptions = options.benchmarkOptions
+                benchmarkOptions.preRunIssues = gate.issues
 
                 phase = .benchmarking
                 var lastStage: BenchmarkProgress.Stage?
                 var lastLabel: String?
                 let report = try await BenchmarkEngine.shared.runAndStore(
                     model: model,
-                    options: options.benchmarkOptions
+                    options: benchmarkOptions
                 ) { [weak self] progress in
                     guard let self else { return }
                     self.benchmarkProgress = progress
@@ -694,6 +775,15 @@ final class BuildTestRunner {
                 }
                 break
 
+            } catch BuildTestError.runStopped(let detail) {
+                // Not a failure of the model: the phone is in no state to
+                // measure anything. Recorded as a skip, cleaned up below, and
+                // the loop ends after the cleanup.
+                stopReason = detail
+                let reason = "skipped: run stopped - \(detail)"
+                appendLog("  " + reason)
+                record(.skipped(model, reason: reason))
+
             } catch {
                 let detail = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
@@ -713,6 +803,15 @@ final class BuildTestRunner {
             // behind. The next model's load time is measured from cold or it
             // is not worth measuring.
             await InferenceManager.shared.unloadCurrent()
+
+            if let stopReason {
+                for later in eligible.dropFirst(index + 1) {
+                    record(.skipped(later, reason: "skipped: run stopped before this model - \(stopReason)"))
+                }
+                appendLog("[build-test] STOPPED after \(index + 1) of \(eligible.count) models: \(stopReason). "
+                    + "Check the phone: Low Power Mode off, cable in and charging.")
+                break
+            }
         }
 
         // MARK: Artefact
@@ -1169,6 +1268,7 @@ extension BuildTestRunner {
     private func downloadAndWait(
         _ model: AIModel,
         ownedByRunner: inout Bool,
+        stallTimeout: TimeInterval? = nil,
         timeout: TimeInterval = BuildTestRunner.downloadTimeout
     ) async throws {
 
@@ -1199,9 +1299,16 @@ extension BuildTestRunner {
         // The FIRST state read after the yield above gets one extra poll
         // cycle before an `.error` is trusted, in case it is still stale.
         var isFirstRead = true
+        // Fails the model after `stallTimeout` seconds without a new byte
+        // instead of watching a dead transfer for the whole budget.
+        var stallWatch = stallTimeout.map { DownloadStallWatch(timeout: $0) }
+        let transferStart = Date()
+        var lastBytes: Int64 = 0
 
         while Date() < deadline {
             try Task.checkCancellation()
+            var observedBytes: Int64?
+            var compiling = false
 
             switch downloader.state(for: model) {
             case .installed:
@@ -1240,6 +1347,8 @@ extension BuildTestRunner {
 
             case .downloading(let fraction, let downloaded, let total):
                 lastState = "downloading"
+                observedBytes = downloaded
+                lastBytes = downloaded
                 // Bytes are moving because this run asked for them: claim
                 // ownership now, so a crash from here on still finds proof on
                 // disk that this directory is ours to remove.
@@ -1262,6 +1371,7 @@ extension BuildTestRunner {
 
             case .compiling(let fraction):
                 lastState = "compiling"
+                compiling = true
                 if !ownedByRunner {
                     ownedByRunner = true
                     Self.markOwned(model)
@@ -1294,9 +1404,33 @@ extension BuildTestRunner {
             }
 
             isFirstRead = false
+
+            if stallWatch != nil {
+                let elapsed = Date().timeIntervalSince(transferStart)
+                if compiling {
+                    stallWatch?.reset(at: elapsed)
+                } else if stallWatch?.observe(bytes: observedBytes, elapsed: elapsed) == true {
+                    let network = NetworkPathWatcher.shared.stateDescription
+                    appendLog(String(
+                        format: "  [download] %@: no bytes for %.0f s (at %.2f GB, state %@), network %@ "
+                            + "- failing this model",
+                        model.id, stallWatch?.idle(at: elapsed) ?? 0,
+                        Double(lastBytes) / 1_073_741_824, lastState, network
+                    ))
+                    appendLog("  [conditions] " + MeasurementConditions.logLine())
+                    throw BuildTestError.downloadStalled(
+                        seconds: stallWatch?.timeout ?? 0, network: network
+                    )
+                }
+            }
+
             try await Task.sleep(nanoseconds: UInt64(Self.downloadPollInterval * 1_000_000_000))
         }
 
+        // A background URLSession treats every transfer as discretionary
+        // while the app is in the background (and Low Power Mode defers
+        // them), so a stall at 0% is usually the phone's state, not the host.
+        appendLog("  [conditions] " + MeasurementConditions.logLine())
         throw BuildTestError.downloadTimedOut(seconds: effectiveTimeout, lastState: lastState)
     }
 
@@ -1310,62 +1444,5 @@ extension BuildTestRunner {
     static func deleteAndWait(_ model: AIModel) async {
         ModelDownloader.shared.delete(model)
         await Task.detached { try? await Task.sleep(nanoseconds: 3_000_000_000) }.value
-    }
-}
-
-// MARK: - Thermal hygiene
-
-extension BuildTestRunner {
-
-    /// How often the thermal state is re-read while waiting.
-    nonisolated static let cooldownPollInterval: TimeInterval = 10
-
-    /// Longest the run will wait for one cooldown. A phone that is still
-    /// `serious` after five idle minutes is not going to cool on the desk it
-    /// is lying on; the run proceeds and the engine's own gate (plus the
-    /// `thermallyConstrained` flag) takes it from there.
-    nonisolated static let cooldownMaxWait: TimeInterval = 5 * 60
-
-    /// Returns immediately when the device is at `fair` or cooler. Otherwise
-    /// polls until it drops to `fair` or the cap expires.
-    ///
-    /// The engine already refuses to measure a `serious` device, but a sweep
-    /// is a marathon: model N's benchmark heats the phone, and model N+1 then
-    /// starts its own cool-down clock already behind. Waiting here mirrors
-    /// the cooldown protocol mobile-inference papers use between subjects and
-    /// keeps the later models in a sweep comparable to the earlier ones.
-    ///
-    /// - Throws: `CancellationError` when the run is cancelled.
-    private func coolDownIfNeeded() async throws {
-        let fairRank = ProcessInfo.ThermalState.fair.severityRank
-        let initial = ProcessInfo.processInfo.thermalState
-        refreshThermalState()
-        guard initial.severityRank > fairRank else { return }
-
-        appendLog("  [thermal] device is \(initial.reportName) - waiting for it to cool to "
-            + "fair before the next model (up to \(Int(Self.cooldownMaxWait)) s)")
-
-        let start = Date()
-        while Date().timeIntervalSince(start) < Self.cooldownMaxWait {
-            try Task.checkCancellation()
-            try await Task.sleep(
-                nanoseconds: UInt64(Self.cooldownPollInterval * 1_000_000_000)
-            )
-            let state = ProcessInfo.processInfo.thermalState
-            refreshThermalState()
-            if state.severityRank <= fairRank {
-                appendLog(String(
-                    format: "  [thermal] cooled to %@ after %.0f s",
-                    state.reportName, Date().timeIntervalSince(start)
-                ))
-                return
-            }
-        }
-
-        appendLog(String(
-            format: "  [thermal] still %@ after %.0f s - proceeding; the run will be "
-                + "flagged thermallyConstrained if it stays hot",
-            ProcessInfo.processInfo.thermalState.reportName, Self.cooldownMaxWait
-        ))
     }
 }

@@ -242,6 +242,29 @@ enum HuggingFaceAPI {
         return info.spaces
     }
 
+    // MARK: GGUF metadata
+
+    /// `general.architecture` of the repo's GGUF weights as the Hub parsed it
+    /// (`expand[]=gguf`), so an architecture the bundled llama.cpp cannot run
+    /// is refused before the download. Never throws: nil (no GGUF, older
+    /// repo, network trouble) just means the load attempt decides.
+    static func fetchGGUFArchitecture(repo: String) async -> String? {
+        var components = URLComponents(string: "\(webHost)/api/models/\(repo)")
+        components?.queryItems = [URLQueryItem(name: "expand[]", value: "gguf")]
+        guard let url = components?.url else { return nil }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let gguf = json["gguf"] as? [String: Any],
+              let architecture = gguf["architecture"] as? String,
+              !architecture.isEmpty
+        else { return nil }
+        return architecture
+    }
+
     /// Where "Try online" should send the user: a demo Space if one exists,
     /// otherwise the model page itself.
     static func onlineDemoURL(repo: String, spaces: [String]) -> URL? {

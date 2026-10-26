@@ -46,6 +46,15 @@ struct ModelCardView: View {
                         .padding(.vertical, 2)
                         .background(.purple, in: Capsule())
                 }
+                if model.deprecated {
+                    // Still installable, just no longer promoted.
+                    Text("Older model")
+                        .font(.caption2).bold()
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.15), in: Capsule())
+                }
                 Text(model.family + " · " + model.parameterSize + " · " + model.quantization)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

@@ -20,6 +20,7 @@ import Foundation
 import MLX
 import MLXVLM
 import MLXLMCommon
+import Tokenizers
 import UIKit
 
 final class MLXVisionEngine: InferenceEngine, @unchecked Sendable {
@@ -74,40 +75,34 @@ final class MLXVisionEngine: InferenceEngine, @unchecked Sendable {
                         return CIImage(cgImage: cg)
                     }
 
-                    // Build the full history as Chat.Messages with the images
-                    // attached to the LAST user message. The legacy
-                    // `UserInput(prompt:images:)` path silently drops images
-                    // for some VLM processors (Gemma 3) in the pinned
-                    // mlx-swift-examples release — the chat-based input is
-                    // the path Apple's own VLMEval sample uses.
-                    var chat: [Chat.Message] = []
-                    for (index, turn) in turns.enumerated() {
-                        let isLastUser = turn.role == .user
-                            && index == turns.lastIndex(where: { $0.role == .user })
-                        switch turn.role {
-                        case .system:
-                            chat.append(.system(turn.content))
-                        case .assistant:
-                            chat.append(.assistant(turn.content))
-                        case .user:
-                            chat.append(.user(
-                                turn.content,
-                                images: isLastUser ? ciImages.map { .ciImage($0) } : []
-                            ))
-                        }
-                    }
-                    let userInput = UserInput(chat: chat)
+                    let chat = Self.chat(from: turns, images: ciImages)
+                    // Gemma-style templates that reject a system role get
+                    // the instructions folded into the first user turn.
+                    let foldedChat: [Chat.Message]? = turns.contains(where: { $0.role == .system })
+                        ? Self.chat(from: SystemPrompt.foldedIntoFirstUser(turns), images: ciImages)
+                        : nil
 
                     let start = Date()
 
                     // Counters live inside the perform closure so no mutable
                     // state is captured across concurrency domains.
                     let tokensGenerated: Int = try await container.perform { context in
-                        let input = try await context.processor.prepare(input: userInput)
+                        let input: LMInput
+                        do {
+                            input = try await context.processor.prepare(input: UserInput(chat: chat))
+                        } catch {
+                            guard let foldedChat else { throw error }
+                            input = try await context.processor.prepare(input: UserInput(chat: foldedChat))
+                        }
+                        continuation.yield(.diagnostic(.promptRendered(
+                            MLXTextEngine.renderedPrompt(input: input, tokenizer: context.tokenizer)
+                        )))
+                        // Temperature and topP only (`MLXSampling`).
+                        let mapped = MLXSampling.map(parameters, passRepetitionPenalty: false)
                         let generateParams = GenerateParameters(
                             maxTokens: parameters.maxTokens,
-                            temperature: parameters.temperature,
-                            topP: parameters.topP
+                            temperature: mapped.temperature,
+                            topP: mapped.topP
                         )
                         let stream = try MLXLMCommon.generate(
                             input: input,
@@ -116,8 +111,10 @@ final class MLXVisionEngine: InferenceEngine, @unchecked Sendable {
                         )
                         var firstTokenReported = false
                         var count = 0
+                        var reported: Int?
                         for await event in stream {
-                            if case .chunk(let chunk) = event {
+                            switch event {
+                            case .chunk(let chunk):
                                 if !firstTokenReported {
                                     let ms = Date().timeIntervalSince(start) * 1000
                                     continuation.yield(.diagnostic(.firstTokenLatency(ms: ms)))
@@ -125,9 +122,13 @@ final class MLXVisionEngine: InferenceEngine, @unchecked Sendable {
                                 }
                                 count += 1
                                 continuation.yield(.textDelta(chunk))
+                            case .info(let info):
+                                reported = info.generationTokenCount
+                            default:
+                                break
                             }
                         }
-                        return count
+                        return reported ?? count
                     }
 
                     let elapsed = Date().timeIntervalSince(start)
@@ -145,6 +146,28 @@ final class MLXVisionEngine: InferenceEngine, @unchecked Sendable {
                 }
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
+    /// Build the full history as Chat.Messages with the images attached to
+    /// the LAST user message. The legacy `UserInput(prompt:images:)` path
+    /// silently drops images for some VLM processors (Gemma 3) in the pinned
+    /// mlx-swift-examples release - the chat-based input is the path Apple's
+    /// own VLMEval sample uses.
+    static func chat(from turns: [ChatTurn], images: [CIImage]) -> [Chat.Message] {
+        let lastUser = turns.lastIndex(where: { $0.role == .user })
+        return turns.enumerated().map { index, turn in
+            switch turn.role {
+            case .system:
+                return .system(turn.content)
+            case .assistant:
+                return .assistant(turn.content)
+            case .user:
+                return .user(
+                    turn.content,
+                    images: index == lastUser ? images.map { .ciImage($0) } : []
+                )
+            }
         }
     }
 

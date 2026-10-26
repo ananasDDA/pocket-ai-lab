@@ -47,6 +47,15 @@ nonisolated struct AIModel: Identifiable, Hashable, Sendable, Codable {
     /// smaller and would put an on-device compile back. Pin it, and keep
     /// `requiresCompilation` in step with the suffix.
     let preferredPackage: String?
+    /// An older model kept installable but no longer promoted: never
+    /// recommended, and listed after every current model. Optional in
+    /// `catalog.json` (absent means false) and written back only when true,
+    /// so catalogs without it decode and re-encode unchanged.
+    let deprecated: Bool
+    /// The authors' recommended sampling, merged over the chat's global
+    /// parameters (`ModelSampling`). Optional in `catalog.json` and written
+    /// back only when present, like `deprecated`; nil keeps the global set.
+    let sampling: ModelSampling?
 
     init(
         id: String,
@@ -70,7 +79,9 @@ nonisolated struct AIModel: Identifiable, Hashable, Sendable, Codable {
         revision: String? = nil,
         licenseName: String? = nil,
         licenseURL: String? = nil,
-        preferredPackage: String? = nil
+        preferredPackage: String? = nil,
+        deprecated: Bool = false,
+        sampling: ModelSampling? = nil
     ) {
         self.id = id
         self.name = name
@@ -94,6 +105,8 @@ nonisolated struct AIModel: Identifiable, Hashable, Sendable, Codable {
         self.licenseName = licenseName
         self.licenseURL = licenseURL
         self.preferredPackage = preferredPackage
+        self.deprecated = deprecated
+        self.sampling = sampling
     }
 
     /// Effective disk footprint. Core ML models that require on-device
@@ -115,7 +128,7 @@ nonisolated extension AIModel {
         case huggingFaceRepo, requiresAppleIntelligence, contextLength
         case quality, requiresCompilation, preferredGGUFFilename
         case mmprojFilename, source, revision, licenseName, licenseURL
-        case preferredPackage
+        case preferredPackage, deprecated, sampling
     }
 
     /// Hand-written so that hand-edited `catalog.json` entries may omit
@@ -145,7 +158,11 @@ nonisolated extension AIModel {
             revision: try c.decodeIfPresent(String.self, forKey: .revision),
             licenseName: try c.decodeIfPresent(String.self, forKey: .licenseName),
             licenseURL: try c.decodeIfPresent(String.self, forKey: .licenseURL),
-            preferredPackage: try c.decodeIfPresent(String.self, forKey: .preferredPackage)
+            preferredPackage: try c.decodeIfPresent(String.self, forKey: .preferredPackage),
+            deprecated: try c.decodeIfPresent(Bool.self, forKey: .deprecated) ?? false,
+            // Lenient: a malformed `sampling` object drops the sampling, not
+            // the entry - and with it the whole remote catalog.
+            sampling: (try? c.decodeIfPresent(ModelSampling.self, forKey: .sampling)) ?? nil
         )
     }
 
@@ -173,6 +190,10 @@ nonisolated extension AIModel {
         try c.encodeIfPresent(licenseName, forKey: .licenseName)
         try c.encodeIfPresent(licenseURL, forKey: .licenseURL)
         try c.encodeIfPresent(preferredPackage, forKey: .preferredPackage)
+        if deprecated {
+            try c.encode(true, forKey: .deprecated)
+        }
+        try c.encodeIfPresent(sampling, forKey: .sampling)
     }
 }
 
@@ -223,6 +244,34 @@ nonisolated enum ModelBackend: String, Sendable, Codable, CaseIterable, Identifi
         case .coreML, .coreMLWhisper, .coreMLKokoro: return .coreML
         case .llamaCpp, .llamaCppVision, .whisperCpp: return .llamaCpp
         }
+    }
+}
+
+// MARK: - Chat model eligibility
+
+nonisolated extension ModelBackend {
+
+    /// Whether a model on this backend can be the chat model. Speech
+    /// backends have their own roles instead: whisper.cpp and Core ML Whisper
+    /// transcribe voice messages, Kokoro reads replies aloud. In 1.1 a user
+    /// could pick Whisper as the chat model, and the first image they sent
+    /// failed with `unsupported_attachment`.
+    var canRunChat: Bool {
+        switch self {
+        case .whisperCpp, .coreMLWhisper, .coreMLKokoro:
+            return false
+        case .appleIntelligence, .mlx, .mlxVision, .mlxAudio, .coreML, .llamaCpp, .llamaCppVision:
+            return true
+        }
+    }
+}
+
+nonisolated extension AIModel {
+
+    /// Selectable as the chat model: a chat backend, and text in, text out
+    /// (an imported entry's capabilities are guessed, so both are checked).
+    var canBeChatModel: Bool {
+        backend.canRunChat && capabilities.contains(.textIn) && capabilities.contains(.textOut)
     }
 }
 

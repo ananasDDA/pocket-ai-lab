@@ -95,10 +95,12 @@ final class LlamaCppVisionEngine: InferenceEngine, @unchecked Sendable {
 
                     // Assemble the transcript, its media markers and the
                     // bitmaps in one pass, trimmed to what the context
-                    // window can hold. The engine is stateless — the KV
-                    // cache is rebuilt from this prompt on every turn — so
-                    // the media of EVERY turn is replayed, not just the
-                    // last one's.
+                    // window can hold. The engine is stateless - the
+                    // context reuses whatever prefix of this prompt its KV
+                    // cache already holds and decodes the rest - so the
+                    // media of EVERY turn is replayed, not just the last
+                    // one's. A replayed image that is still in the cache
+                    // is recognised by its content and not encoded again.
                     let family = PromptFormatter.detectFamily(modelId: self.model.id)
                     let prepared = VisionPromptBuilder.build(
                         turns: turns,
@@ -121,7 +123,7 @@ final class LlamaCppVisionEngine: InferenceEngine, @unchecked Sendable {
 
                     // Token index is passed from the actor, so no shared
                     // mutable state is captured across concurrency domains.
-                    let tokensGenerated = try await ctx.generate(
+                    let generation = try await ctx.generate(
                         prompt: prompt,
                         images: images,
                         parameters: parameters
@@ -134,6 +136,16 @@ final class LlamaCppVisionEngine: InferenceEngine, @unchecked Sendable {
                     }
 
                     let elapsed = Date().timeIntervalSince(start)
+                    let tokensGenerated = generation.tokens
+                    let prefill = generation.prefill
+                    var report = prefill.report
+                    report.droppedTurns = prepared.droppedTurns
+                    report.firstUserTurnIntact = !prepared.firstUserTurnDropped
+                    continuation.yield(.diagnostic(.promptProcessed(
+                        tokenCount: report.promptTokens,
+                        timeMs: prefill.ms
+                    )))
+                    continuation.yield(.diagnostic(.promptCache(report)))
                     continuation.yield(.diagnostic(.finished(
                         tokensGenerated: tokensGenerated,
                         tokensPerSecond: elapsed > 0 ? Double(tokensGenerated) / elapsed : 0

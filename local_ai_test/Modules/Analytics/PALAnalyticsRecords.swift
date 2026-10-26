@@ -134,6 +134,8 @@ nonisolated enum PALErrorClassifier {
     /// path or a model's own words.
     static func kind(of error: Error, phase: Phase) -> String {
         if error is CancellationError { return "cancelled" }
+        // Already classified from llama.cpp's log; the kind is a fixed slug.
+        if let load = error as? LlamaLoadError { return load.cause.errorKind }
         if let inference = error as? InferenceError {
             switch inference {
             case .cancelled: return "cancelled"
@@ -231,11 +233,17 @@ nonisolated struct PALGenerationMeter: Sendable {
         firstTokenAt.map { $0.timeIntervalSince(start) * 1000 }
     }
 
+    /// Fewest tokens a decode rate is reported for. A reply of two or three
+    /// tokens is a few milliseconds of wall clock, and dividing by that gave
+    /// 800-1,300 tok/s in the first real data; such a rate says nothing about
+    /// the model, so the record carries the token count and no rate.
+    static let minimumTokensForRate = 8
+
     func decodeTokensPerSecond(end: Date) -> Double? {
         guard let first = firstTokenAt else { return nil }
         let window = (lastTokenAt ?? end).timeIntervalSince(first)
         let counted = tokensGenerated
-        guard window > 0, counted > 1 else { return nil }
+        guard window > 0, counted >= Self.minimumTokensForRate else { return nil }
         return Double(counted - 1) / window
     }
 }

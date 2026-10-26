@@ -16,6 +16,14 @@ struct ChatMessage: Identifiable {
     /// Filled in when generation starts; nil for messages sent before the
     /// engine could report one.
     var sentPrompt: RenderedPrompt?
+    /// For an assistant message: generation ended because it reached the
+    /// reply's token cap, not because the model finished. The chat offers
+    /// "Continue" under such a reply instead of leaving it looking broken.
+    var stoppedAtLimit = false
+    /// For an assistant message: the text is the app's explanation of an
+    /// empty reply, not something the model wrote. Sent back to the model as
+    /// an empty turn so the explanation never becomes part of the transcript.
+    var isNotice = false
 
     init(role: Role, text: String, attachments: [ChatAttachment] = []) {
         self.role = role

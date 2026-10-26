@@ -91,10 +91,12 @@ final class MLXAudioEngine: InferenceEngine, @unchecked Sendable {
                     // state is captured across concurrency domains.
                     let tokensGenerated: Int = try await container.perform { context in
                         let input = try await context.processor.prepare(input: userInput)
+                        // Temperature and topP only (`MLXSampling`).
+                        let mapped = MLXSampling.map(parameters, passRepetitionPenalty: false)
                         let generateParams = GenerateParameters(
                             maxTokens: parameters.maxTokens,
-                            temperature: parameters.temperature,
-                            topP: parameters.topP
+                            temperature: mapped.temperature,
+                            topP: mapped.topP
                         )
                         let stream = try MLXLMCommon.generate(
                             input: input,

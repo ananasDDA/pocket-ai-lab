@@ -21,7 +21,17 @@ nonisolated enum LocalImportError: Error, LocalizedError, Equatable {
     /// one means the file is corrupt.
     case fileNotAccessible(String)
     case projectorOnly(String)
+    /// One part of a split model. The Files picker hands over one file, and
+    /// llama.cpp needs every part next to the first.
+    case splitPart(String, index: Int, count: Int)
+    /// The bundled llama.cpp has no implementation for the architecture.
+    case unsupportedArchitecture(String, architecture: String)
+    /// A GGUF that is not model weights: a LoRA adapter, an importance matrix.
+    case notAModel(String, kind: String)
     case notEnoughSpace(neededGB: Double, freeGB: Double)
+    /// Needs more memory than the device can give llama.cpp. Carries the
+    /// full plain-words explanation from `ImportFit`.
+    case tooLarge(String)
     case copyFailed(String)
 
     var errorDescription: String? {
@@ -38,6 +48,20 @@ nonisolated enum LocalImportError: Error, LocalizedError, Equatable {
         case .projectorOnly(let filename):
             return "\(filename) is a vision projector (mmproj), not a model. "
                 + "Projector files cannot be imported on their own."
+        case .splitPart(let filename, let index, let count):
+            return "\(filename) is part \(index) of \(count) of a model that was split into "
+                + "several files. llama.cpp needs every part side by side, and a file picked "
+                + "here comes on its own. Import the model from its Hugging Face link "
+                + "instead: the app downloads all \(count) parts together."
+        case .unsupportedArchitecture(let filename, let architecture):
+            return "\(filename) uses the \(architecture) architecture, which the llama.cpp "
+                + "version in this app (\(LlamaArchitectureSupport.llamaRevision)) cannot run."
+        case .notAModel(let filename, let kind):
+            let what = kind == "adapter" ? "a LoRA adapter"
+                : kind == "imatrix" ? "an importance matrix" : "a \(kind) file"
+            return "\(filename) is \(what), not a model. It cannot be chatted with on its own."
+        case .tooLarge(let explanation):
+            return explanation
         case .notEnoughSpace(let neededGB, let freeGB):
             return String(
                 format: "Not enough storage: the file needs %.1f GB and only %.1f GB is free.",
@@ -93,6 +117,11 @@ nonisolated enum LocalGGUFFile {
         guard !filename.lowercased().contains("mmproj") else {
             throw LocalImportError.projectorOnly(filename)
         }
+        // Caught by name first: a part other than the first carries no
+        // metadata worth reading, and the name is what llama.cpp goes by.
+        if let part = GGUFNaming.splitPart(filename), part.count > 1 {
+            throw LocalImportError.splitPart(filename, index: part.index, count: part.count)
+        }
 
         guard let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
               size > 0
@@ -110,12 +139,40 @@ nonisolated enum LocalGGUFFile {
         guard let header else {
             throw LocalImportError.notGGUF(filename)
         }
+        try validate(filename: filename, header: header)
 
         return LocalGGUFCandidate(
             filename: filename,
             fileSizeBytes: Int64(size),
             header: header
         )
+    }
+
+    /// Refuses a GGUF that opened fine but cannot load as a chat model, from
+    /// what its header declares. Pure, so the rules are testable without a
+    /// file.
+    static func validate(filename: String, header: GGUFHeader) throws {
+        if header.isSplitPart {
+            let count = header.splitCount ?? 1
+            throw LocalImportError.splitPart(
+                filename, index: (header.splitIndex ?? 0) + 1, count: count
+            )
+        }
+        if let kind = header.fileKind?.lowercased(), kind != "model" {
+            if kind == "mmproj" { throw LocalImportError.projectorOnly(filename) }
+            throw LocalImportError.notAModel(filename, kind: kind)
+        }
+        if GGUFNaming.isImportanceMatrix(filename) {
+            throw LocalImportError.notAModel(filename, kind: "imatrix")
+        }
+        switch LlamaArchitectureSupport.verdict(for: header.architecture) {
+        case .projector?:
+            throw LocalImportError.projectorOnly(filename)
+        case .unsupported(let arch)?:
+            throw LocalImportError.unsupportedArchitecture(filename, architecture: arch)
+        case .supported?, nil:
+            break
+        }
     }
 
     /// Free space on the volume that holds the app container, read fresh

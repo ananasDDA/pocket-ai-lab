@@ -32,8 +32,25 @@ final class InstalledModelsStore {
         knownModels.filter { $0.source == .imported }
     }
 
+    /// Installed models that can be the chat model. Speech-to-text and
+    /// text-to-speech models stay installed for their own roles but are
+    /// never offered or auto-selected as the chat model.
+    var chatModels: [AIModel] {
+        installedModels.filter(\.canBeChatModel)
+    }
+
+    /// The chat model. Only ever a model that `canBeChatModel`: every
+    /// assignment in this store goes through `chatEligible(_:)`, and
+    /// `ChatViewModel.selectModel` refuses others.
     var selectedModel: AIModel? {
         didSet { save() }
+    }
+
+    /// `model` if it may be the chat model, otherwise the first installed
+    /// model that may.
+    private func chatEligible(_ model: AIModel?) -> AIModel? {
+        if let model, model.canBeChatModel { return model }
+        return chatModels.first
     }
 
     private init() {
@@ -55,7 +72,7 @@ final class InstalledModelsStore {
         knownModels.removeAll { $0.id == model.id }
         installedIDs.remove(model.id)
         if selectedModel?.id == model.id {
-            selectedModel = installedModels.first
+            selectedModel = chatModels.first
         }
         save()
     }
@@ -63,7 +80,9 @@ final class InstalledModelsStore {
     func markInstalled(_ model: AIModel) {
         upsert(model)
         installedIDs.insert(model.id)
-        if selectedModel == nil { selectedModel = model }
+        // The first chat model installed becomes the selection; a speech
+        // model installed first (Whisper for voice messages) must not.
+        if selectedModel == nil, model.canBeChatModel { selectedModel = model }
         save()
     }
 
@@ -74,7 +93,7 @@ final class InstalledModelsStore {
     func markUninstalled(_ model: AIModel) {
         installedIDs.remove(model.id)
         if selectedModel?.id == model.id {
-            selectedModel = installedModels.first
+            selectedModel = chatModels.first
         }
         save()
     }
@@ -127,7 +146,9 @@ final class InstalledModelsStore {
         knownModels = registry.models
         installedIDs = Set(registry.installedIDs)
         if let selectedID = registry.selectedModelID {
-            selectedModel = knownModels.first { $0.id == selectedID }
+            // A 1.1 registry can hold Whisper or Kokoro as the chat model;
+            // fall back to an installed chat model instead.
+            selectedModel = chatEligible(knownModels.first { $0.id == selectedID })
         }
         isLoading = false
     }

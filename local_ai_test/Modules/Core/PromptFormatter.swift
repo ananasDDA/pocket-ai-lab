@@ -105,18 +105,12 @@ enum PromptFormatter {
     private static func formatGemma(_ turns: [ChatTurn]) -> String {
         // Gemma has no system role. Mapping a system turn onto "user" would
         // produce two consecutive user turns and break the strict
-        // user/model alternation — fold it into the first user turn instead.
-        let (system, rest) = extractSystem(turns)
+        // user/model alternation - fold it into the first user turn instead,
+        // labelled so it reads as instructions (`SystemPrompt.foldedIntoFirstUser`).
         var out = ""
-        var systemPending = system
-        for turn in rest {
+        for turn in SystemPrompt.foldedIntoFirstUser(turns) {
             let role = turn.role == .assistant ? "model" : "user"
-            var content = turn.content
-            if turn.role == .user, let sys = systemPending {
-                content = sys + "\n\n" + content
-                systemPending = nil
-            }
-            out += "<start_of_turn>\(role)\n\(content)<end_of_turn>\n"
+            out += "<start_of_turn>\(role)\n\(turn.content)<end_of_turn>\n"
         }
         out += "<start_of_turn>model\n"
         return out
@@ -154,18 +148,11 @@ enum PromptFormatter {
         // Mistral v0.3 has no system role either; emitting the system turn as
         // its own [INST] block makes the model answer the instructions
         // instead of the first question. Fold it into the first user turn.
-        let (system, rest) = extractSystem(turns)
         var out = "<s>"
-        var systemPending = system
-        for turn in rest {
+        for turn in SystemPrompt.foldedIntoFirstUser(turns) {
             switch turn.role {
             case .user, .system:
-                var content = turn.content
-                if let sys = systemPending {
-                    content = sys + "\n\n" + content
-                    systemPending = nil
-                }
-                out += "[INST] \(content) [/INST]"
+                out += "[INST] \(turn.content) [/INST]"
             case .assistant:
                 out += "\(turn.content)</s>"
             }
@@ -173,8 +160,8 @@ enum PromptFormatter {
         return out
     }
 
-    /// Pulls the first system turn out of the list (Gemma / Mistral have no
-    /// native system role and need it merged into the first user message).
+    /// Pulls the first system turn out of the list, for formats that place
+    /// it themselves.
     private static func extractSystem(_ turns: [ChatTurn]) -> (String?, [ChatTurn]) {
         let system = turns.first(where: { $0.role == .system })?.content
         let rest = turns.filter { $0.role != .system }

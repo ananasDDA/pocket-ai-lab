@@ -70,6 +70,7 @@
 
 import Foundation
 import Darwin
+import UIKit
 
 // MARK: - Protocol constants
 
@@ -213,6 +214,12 @@ nonisolated struct BenchmarkOptions: Sendable, Hashable {
     /// rates either way, so a run that starts hot and ramps down is still
     /// caught; the run is just not delayed.
     var thermalGating: Bool
+
+    /// Issues the caller found before the run started - a cool-down or power
+    /// wait that ran out (`RunConditionsGate`). They go into
+    /// `PerformanceMetrics.measurementIssues` ahead of whatever the run sees
+    /// itself, so the run is flagged like one measured in Low Power Mode.
+    var preRunIssues: [String] = []
 
     init(
         stages: Stages = .full,
@@ -676,6 +683,13 @@ final class BenchmarkEngine {
                     ? nil
                     : BenchmarkStatistics.mean(decode.rates)
             )
+            // Taken here, with the throughput figures, not at the end: the
+            // quality stage is graded by deterministic checks, so a low power
+            // or background stint during it does not touch these numbers.
+            var measurementIssues = options.preRunIssues
+            for issue in thermal.issues where !measurementIssues.contains(issue) {
+                measurementIssues.append(issue)
+            }
 
             // MARK: 5. Quality
 
@@ -728,9 +742,10 @@ final class BenchmarkEngine {
                 generationRunsTokenCounts: decode.tokenCounts,
                 prefillRunsTokensPerSecond: prefillRuns,
                 warmupPerformed: warmupPerformed,
-                thermallyConstrained: throttle.constrained,
+                thermallyConstrained: throttle.constrained || !measurementIssues.isEmpty,
                 throttleDropPercent: throttle.dropPercent,
                 peakThermalState: thermal.peak.reportName,
+                measurementIssues: measurementIssues.isEmpty ? nil : measurementIssues,
                 standardProtocol: standardProtocol
             )
 
@@ -1170,11 +1185,7 @@ final class BenchmarkEngine {
             // measuring the harness, not the model.
             await inference.resetConversation()
 
-            var turns: [ChatTurn] = []
-            if let system = task.systemPrompt, !system.isEmpty {
-                turns.append(.system(system))
-            }
-            turns.append(.user(task.prompt))
+            let turns = Self.qualityTurns(for: task)
 
             let started = Date()
             let sample: GenerationSample
@@ -1209,6 +1220,20 @@ final class BenchmarkEngine {
             return graded.isEmpty ? nil : CategoryScore(category: category, tasks: graded)
         }
         return QualityOutcome(categories: categories, truncated: truncated)
+    }
+
+    /// Exactly what one quality task sends: its own system prompt when it
+    /// has one, then its prompt. Never the chat's system prompt
+    /// (`SystemPromptStore`): scores have to stay comparable with every
+    /// report made before the chat had one, and with each other no matter
+    /// what a user typed into their chat settings.
+    static func qualityTurns(for task: BenchmarkTask) -> [ChatTurn] {
+        var turns: [ChatTurn] = []
+        if let system = task.systemPrompt, !system.isEmpty {
+            turns.append(.system(system))
+        }
+        turns.append(.user(task.prompt))
+        return turns
     }
 
     /// Grades one generation. A leading `<think>...</think>` block is
@@ -1269,6 +1294,14 @@ final class BenchmarkEngine {
         }
     }
 
+    /// What every benchmark generation sends: `deterministic` with the
+    /// step's token cap. No model sampling, ever (see `generate`).
+    nonisolated static func generationParameters(maxTokens: Int) -> GenerationParameters {
+        var parameters = GenerationParameters.deterministic
+        parameters.maxTokens = maxTokens
+        return parameters
+    }
+
     /// One generation, fully consumed, with a timeout.
     ///
     /// GREEDY DECODING. Every generation the benchmark performs — warmup,
@@ -1294,6 +1327,10 @@ final class BenchmarkEngine {
     ///   • Core ML — temperature (0 switches sampling off entirely), topP and
     ///     repetition penalty are mapped; `topK` and `seed` are dropped.
     ///
+    /// A model's catalog `sampling` never reaches the benchmark: it is
+    /// merged only on the chat path (`ChatViewModel.parameters(for:)`), and
+    /// `deterministic` leaves min-p and the presence penalty off.
+    ///
     /// The honest caveat that survives all of it: greedy sampling removes the
     /// deliberate randomness, not the non-determinism that lives inside an
     /// engine. A backend that resolves ties between equally-likely tokens
@@ -1310,8 +1347,7 @@ final class BenchmarkEngine {
             throw BenchmarkError.engineUnloadedMidRun
         }
 
-        var parameters = GenerationParameters.deterministic
-        parameters.maxTokens = maxTokens
+        let parameters = Self.generationParameters(maxTokens: maxTokens)
 
         let stream = inference.generate(turns: turns, parameters: parameters)
         let start = Date()
@@ -1483,14 +1519,26 @@ final class ThermalTracker {
 
     private(set) var peak: ProcessInfo.ThermalState
 
+    /// Every `MeasurementConditions` issue seen at any boundary, first-seen
+    /// order, no repeats. Becomes `PerformanceMetrics.measurementIssues`.
+    private(set) var issues: [String] = []
+
     init() {
         peak = ProcessInfo.processInfo.thermalState
+        noteIssues()
     }
 
     /// Takes a reading and keeps it if it is the hottest so far.
     func sample() {
         let now = ProcessInfo.processInfo.thermalState
         if now.severityRank > peak.severityRank { peak = now }
+        noteIssues()
+    }
+
+    private func noteIssues() {
+        for issue in MeasurementConditions.currentIssues() where !issues.contains(issue) {
+            issues.append(issue)
+        }
     }
 
     /// True once the device has been seen at `.serious` or worse.
@@ -1501,6 +1549,57 @@ final class ThermalTracker {
     /// instead. Kept because "did this run ever get hot" is still worth
     /// asking of a `ThermalTracker`.
     var constrained: Bool { peak.isThermallyConstrained }
+}
+
+/// Device states under which a throughput measurement describes the OS's
+/// power policy rather than the model.
+///
+/// Both produce a slow but perfectly steady run (repetitions agree to a
+/// hundredth of a token per second), which the throttle rule reads as "not
+/// throttled" and the report would publish as a slow model. A night sweep on
+/// an iPhone Air did exactly that: from one model on, every engine (MLX and
+/// llama.cpp alike) ran 7-11x slower with the phone staying cool, and
+/// downloads stalled at 0%.
+///
+/// `.inactive` is deliberately not an issue: a notification banner or the
+/// Control Center makes the app inactive without restricting the GPU.
+@MainActor
+enum MeasurementConditions {
+
+    static func currentIssues() -> [String] {
+        var issues: [String] = []
+        if ProcessInfo.processInfo.isLowPowerModeEnabled {
+            issues.append("low power mode")
+        }
+        if UIApplication.shared.applicationState == .background {
+            issues.append("app in background")
+        }
+        return issues
+    }
+
+    /// One line for the harness console: the issues plus the battery, which
+    /// is context (a sweep drains a phone whose charging pauses when hot)
+    /// rather than a reason to discard a run.
+    static func logLine() -> String {
+        let device = UIDevice.current
+        if !device.isBatteryMonitoringEnabled { device.isBatteryMonitoringEnabled = true }
+        let battery: String
+        switch device.batteryState {
+        case .charging: battery = "charging"
+        case .full: battery = "full"
+        case .unplugged: battery = "unplugged"
+        case .unknown: battery = "unknown"
+        @unknown default: battery = "unknown"
+        }
+        let level = device.batteryLevel >= 0
+            ? String(format: "%.0f%%", device.batteryLevel * 100)
+            : "?"
+        let issues = currentIssues()
+        return "low power \(ProcessInfo.processInfo.isLowPowerModeEnabled ? "on" : "off"), "
+            + "app \(UIApplication.shared.applicationState == .background ? "background" : "foreground"), "
+            + "battery \(level) \(battery), thermal \(ProcessInfo.processInfo.thermalState.reportName)"
+            + (issues.isEmpty ? "" : " - numbers taken now are invalid")
+    }
 }
 
 /// Everything one generation tells us.

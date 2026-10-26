@@ -1,18 +1,19 @@
 {
   "schemaVersion": 1,
-  "version": "1.1.0",
-  "build": 3,
-  "published": true,
-  "releasedAt": "2026-10-23",
+  "version": "1.2.0",
+  "build": 4,
+  "published": false,
+  "releasedAt": "2026-10-26",
   "appStoreURL": "https://apps.apple.com/app/id6802253142",
   "notes": [
-    "New models: Gemma 4 E2B, Qwen 3.5 and LFM2, all GGUF",
-    "Long conversations keep their context in GGUF chats",
-    "Each model's own chat template, with an inspector",
-    "Raw chat view shows exactly what the model gets",
-    "Benchmark suite grew to 118 tasks, MLPerf-style",
-    "Import your own benchmark suites (promptfoo, JSON)",
-    "Standard benchmark runs stop after 20 minutes",
-    "Build test survives a crash mid-sweep"
+    "Replies start instantly in long chats, photos included",
+    "Long chats keep your first message and the system prompt",
+    "A short default system prompt you can read and edit",
+    "Replies stop at 512 tokens, with a Continue button",
+    "A notice when the phone runs hot, with a lighter model",
+    "My Models: every download in one place, with sizes",
+    "Report a problem by email, straight from the app",
+    "Import explains up front when a model will not fit",
+    "Tap your message to see its image and the exact prompt"
   ]
 }

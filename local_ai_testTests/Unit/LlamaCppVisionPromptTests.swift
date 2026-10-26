@@ -77,9 +77,10 @@ struct LlamaCppVisionPromptTests {
 
     // MARK: - Media replay
 
-    // The regression behind the 1.0.1 report: the KV cache is rebuilt from
-    // the prompt on every turn, so an image that is only in an earlier turn
-    // has to be replayed or the model can no longer see it.
+    // The regression behind the 1.0.1 report: the KV cache only keeps what
+    // the prompt of this turn shares with the last one, so an image that is
+    // only in an earlier turn has to be replayed or the model can no longer
+    // see it.
     @Test func imagesFromEarlierTurnsAreReplayed() {
         let first = Data([0xAA])
         let second = Data([0xBB])
@@ -175,8 +176,9 @@ struct LlamaCppVisionPromptTests {
 
     // MARK: - Media cap
 
-    // Every image in the prompt is re-encoded on every turn, so a long
-    // photo thread must not grow without bound.
+    // Every image in the prompt occupies the window and is encoded again
+    // whenever the cached prefix changes, so a long photo thread must not
+    // grow without bound.
     @Test func onlyTheNewestImagesAreReplayed() {
         var turns: [ChatTurn] = []
         for i in 0..<6 {

@@ -54,6 +54,29 @@
 //    BENCH_QUALITY_BUDGET_SEC=N  Stop each model's quality stage after N
 //                           seconds; the score is then partial and not
 //                           comparable. Default: no budget, every task runs.
+//    BENCH_INTERLEAVE=1     Run heaviest, lightest, second heaviest, ... by
+//                           catalog ramRequiredGB, so a light model gives the
+//                           phone a break. Default: catalog order.
+//
+//  Conditions gate, before every model (`RunConditionsGate`):
+//
+//    BENCH_COOLDOWN_TARGET=nominal|fair|off  Thermal state to wait for.
+//                           Default nominal (fair was not enough: the phone
+//                           went back to serious within minutes).
+//    BENCH_COOLDOWN_SETTLE_SEC=N  Extra idle time once the target is reached
+//                           after a wait. Default 60.
+//    BENCH_COOLDOWN_MAX_SEC=N  Cap of one wait (thermal, power, network).
+//                           Default 1200. A run measured after the cap ran
+//                           out carries the reason in measurementIssues.
+//    Power: Low Power Mode must be off and the phone charging/full or at
+//    40% battery or more; the gate waits for that like for the temperature.
+//    BENCH_STOP_ON_BAD_POWER=0|1  Power still bad at the cap: 1 (default)
+//                           skips this and every later model and ends the
+//                           sweep; 0 measures and flags.
+//    BENCH_DOWNLOAD_STALL_SEC=N  Fail a download that moves no bytes for N
+//                           seconds (default 300; 0 = only the 30-min
+//                           budget). A lost network path is waited for
+//                           (up to the cap) before each download.
 //
 //  There is deliberately NO timeout around the benchmark itself: the v2 suite
 //  takes as long as it takes, and only the download step has a budget (30
@@ -98,6 +121,10 @@ struct CatalogBenchmarkTests {
         let config = BenchmarkHarnessConfig.fromEnvironment()
         let runner = BuildTestRunner.shared
 
+        // Read in the morning: first, whether the phone was set up for the
+        // night at all.
+        NightChecklist.lines.forEach { print("[benchmark] " + $0) }
+
         let report = try await runner.run(options: config.options)
 
         // How many models the sweep considered runnable, as opposed to how
@@ -136,5 +163,8 @@ struct CatalogBenchmarkTests {
             """
         )
         #expect(!report.cancelled, "the sweep was stopped before it finished")
+        if let stopReason = runner.stopReason {
+            Issue.record("the conditions gate stopped the sweep: \(stopReason)")
+        }
     }
 }

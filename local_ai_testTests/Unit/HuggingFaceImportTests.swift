@@ -307,8 +307,9 @@ struct ResourceEstimateTests {
         #expect(estimate.diskFits)
     }
 
-    @Test func verdictTightWithinOneGBOfLimit() {
-        // 8 GB device → 5 GB usable; a 3.6 GB GGUF needs ~4.94 GB.
+    @Test func verdictTightAboveTheComfortMargin() {
+        // 8 GB device → 5.36 GB mmap ceiling, 85% of it 4.56 GB; a 3.6 GB
+        // GGUF needs ~4.94 GB.
         let estimate = ImportAnalyzer.estimate(
             layout: .singleGGUF,
             weightBytes: Int64(3.6 * gb),
