@@ -1,0 +1,6 @@
+# Every crawler, search engine and AI assistant is welcome.
+User-agent: *
+Allow: /
+
+Sitemap: https://ananasdda.github.io/pocket-ai-lab/sitemap.xml
+Sitemap: https://ananasdda.github.io/pocket-ai-lab/sitemap.txt
